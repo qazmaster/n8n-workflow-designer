@@ -1,95 +1,260 @@
 # n8n Workflow Designer
 
-OpenCode skill + MCP server for designing, compiling, and deploying idiomatic n8n workflows from natural language descriptions.
+OpenCode skill + MCP server for designing, validating, compiling, and deploying idiomatic n8n workflows from natural language descriptions.
 
-## Overview
+The default authoring format is readable TypeScript decorators. The MCP server can also return SDK-normalized workflow JSON using the official `@n8n/workflow-sdk` for callers that want JSON directly.
 
+## What this tool does
+
+```text
+Natural language idea
+→ idiomatic workflow design
+→ decorator TypeScript or SDK-normalized JSON
+→ validation
+→ compiled n8n workflow JSON
+→ deployed workflow in n8n
 ```
-Natural Language Idea → Workflow Design → TypeScript Code → n8n JSON → Deployed Workflow
-```
+
+Use it when you want an AI agent to create or maintain n8n automations while still producing reviewable workflow artifacts.
 
 ## Components
 
-### 1. OpenCode Skill (`skills/n8n-workflow-designer/`)
+### OpenCode skill
 
-Provides design guidance, idiomatic patterns, and node reference for n8n workflow creation.
+The bundled `n8n-workflow-designer` skill teaches the agent how to design idiomatic n8n workflows. It covers native node selection, credential placeholders, AI Agent sub-node wiring, error workflows, community node requirements, and validation expectations.
 
-**Installation:**
+Install it into your OpenCode/Claude skills directory:
+
 ```bash
-# Copy skill to your OpenCode skills directory
 cp -r skills/n8n-workflow-designer ~/.claude/skills/
 ```
 
-**Features:**
-- Idiomatic n8n design patterns (native nodes over HTTP Request)
-- Credential management best practices
-- AI Agent + sub-node patterns
-- Error workflow references
-- Community node support (docxtemplater, Qdrant, etc.)
+### MCP server
 
-### 2. MCP Server (`mcp-server/`)
+The MCP server exposes workflow lifecycle tools:
 
-Model Context Protocol server exposing tools for workflow lifecycle management.
+| Tool | Purpose |
+|---|---|
+| `design_workflow` | Generate workflow TypeScript, SDK JSON, or both from natural language. |
+| `compile_workflow` | Compile decorator TypeScript into n8n workflow JSON with `@n8n-as-code/transformer`. |
+| `validate_workflow` | Check idiomatic rules and run official SDK validation for complete JSON. |
+| `deploy_workflow` | Create or update a workflow through the n8n REST API. |
+| `list_workflows` | List workflows in the configured n8n instance. |
+| `get_workflow` | Fetch one workflow by ID. |
 
-**Tools:**
-- `design_workflow` — Generate idiomatic TypeScript from natural language
-- `compile_workflow` — Compile TypeScript to n8n JSON
-- `deploy_workflow` — Deploy to n8n instance via REST API
-- `validate_workflow` — Check idiomatic patterns and common issues
-- `list_workflows` / `get_workflow` — Management operations
+### Example workflows
 
-**Setup:**
-```bash
-cd mcp-server
-npm install
-npm run build
+The examples demonstrate OCR, Bitrix24, document generation, reporting, monitoring, meeting processing, AI agents, Telegram/Google workflows, and large-document OCR patterns.
 
-# Set environment variables
-export N8N_API_KEY="your-api-key"
-export N8N_BASE_URL="https://your-n8n-instance.com"
+### Batch deploy script
 
-# Start server
-npm start
-```
+The deployment script compiles local `.workflow.ts` files and deploys them to n8n. It is useful for batch example deployment; the MCP server is better for agent-driven design/compile/validate/deploy loops.
 
-### 3. Example Workflows (`examples/idiomatic-workflows/`)
+## Package roles
 
-9 redesigned idiomatic workflows demonstrating best practices:
+| Package | Role |
+|---|---|
+| `@n8n-as-code/transformer` | Decorator TypeScript ⇄ n8n workflow JSON compilation. |
+| `@n8n/workflow-sdk` | Official SDK JSON normalization and workflow validation. |
+| `n8n-workflow` | Official n8n workflow and node types. |
+| `n8nac` | Workflow-as-code CLI tooling for development workflows. |
+| `@n8n/cli` | Official n8n CLI tooling for workflow/execution/credential operations. |
 
-| Workflow | Description |
-|----------|-------------|
-| `case1-ocr-vcard` | OCR business card capture with auth guard |
-| `case2-voice-tasks` | Voice note transcription and task routing |
-| `case3-reporting` | Bi-weekly deal reporting with AI analysis |
-| `case4-documents` | NDA/document generation pipeline |
-| `case5-monitor` | Daily deal monitoring with alerts |
-| `case6-meetings` | Meeting transcript processing |
-| `build-your-first-ai-agent` | AI agent with tools demo |
-| `personal-life-manager` | Telegram + Google services integration |
-| `process-large-documents-ocr` | SubworkflowAI + Gemini OCR |
-
-### 4. Deployment Script (`scripts/deploy_workflows.js`)
-
-Batch deployment script for `.workflow.ts` files:
-
-```bash
-N8N_API_KEY="your-key" node scripts/deploy_workflows.js
-```
-
-## Idiomatic Design Principles
-
-1. **Native nodes over HTTP Request** — Use `bitrix24`, `telegram`, `microsoftTeams` instead of raw HTTP
-2. **Credential references** — Configure in n8n UI, reference by ID
-3. **Set nodes for transforms** — Replace simple `code` nodes with `set`
-4. **AI Agent pattern** — Use `@n8n/n8n-nodes-langchain.agent` + sub-nodes
-5. **Error workflows** — Dedicated error handlers referenced via `settings.errorWorkflow`
-6. **Sub-workflows** — Reusable logic via `executeWorkflow`
+The full `n8n` package is intentionally not embedded. This project talks to a running n8n instance through the API.
 
 ## Prerequisites
 
 - Node.js 18+
-- n8n instance with API access
-- OpenCode/Claude Code with skill support
+- A running n8n instance with API access
+- An n8n API key
+- OpenCode/Claude Code or another MCP-capable client
+
+Set environment variables before running deployment tools:
+
+```bash
+export N8N_API_KEY="your-api-key"
+export N8N_BASE_URL="https://your-n8n-instance.com"
+```
+
+## Setup
+
+```bash
+cd mcp-server
+npm install
+npm run build
+npm start
+```
+
+The server runs over stdio, so most users start it through their MCP client configuration rather than calling it directly from a shell.
+
+## Typical workflow
+
+### 1. Design a workflow
+
+Ask the MCP server to design from natural language:
+
+```json
+{
+  "description": "When a webhook receives a new lead, create a Bitrix24 lead and send a Telegram alert",
+  "workflowName": "Lead Intake",
+  "includeErrorHandling": true,
+  "preferredNotificationChannel": "telegram"
+}
+```
+
+By default, `design_workflow` returns decorator TypeScript using `@n8n-as-code/transformer`.
+
+### 2. Choose the output format
+
+`design_workflow` supports three output modes:
+
+| `outputFormat` | Result |
+|---|---|
+| `decorator-typescript` | Reviewable TypeScript decorators. This is the default. |
+| `sdk-json` | n8n workflow JSON normalized through `@n8n/workflow-sdk`. |
+| `both` | Decorator TypeScript plus an SDK-normalized JSON block for inspection. |
+
+Example JSON output request:
+
+```json
+{
+  "description": "Manual trigger, prepare data, then notify Telegram",
+  "workflowName": "Simple Notify",
+  "outputFormat": "sdk-json"
+}
+```
+
+Use `decorator-typescript` when humans or agents will review and edit the workflow. Use `sdk-json` when a caller wants deployable JSON without a separate compile step.
+
+### 3. Compile TypeScript to JSON
+
+If you designed decorator TypeScript, compile it:
+
+```json
+{
+  "typescriptCode": "import { workflow, node, links } from '@n8n-as-code/transformer';\n..."
+}
+```
+
+You can also compile a file path:
+
+```json
+{
+  "filePath": "examples/idiomatic-workflows/case1-ocr-vcard.idiomatic.workflow.ts"
+}
+```
+
+Temporary compile files are cleaned up immediately after compilation.
+
+### 4. Validate before deployment
+
+Run `validate_workflow` on either TypeScript or compiled JSON:
+
+```json
+{
+  "workflowJson": {
+    "name": "Simple Notify",
+    "nodes": [],
+    "connections": {}
+  }
+}
+```
+
+Validation combines project-specific idiomatic checks with official SDK validation when complete workflow JSON is provided.
+
+Common feedback includes:
+
+- prefer native nodes over raw HTTP requests
+- add missing credential placeholders
+- prefer Set nodes for simple field transforms
+- wire AI Agent model/memory/tool sub-nodes correctly
+- declare a separate `settings.errorWorkflow`
+- install required community nodes before deployment
+
+### 5. Deploy to n8n
+
+Deploy compiled JSON or SDK JSON:
+
+```json
+{
+  "workflowJson": {
+    "name": "Lead Intake",
+    "nodes": [],
+    "connections": {},
+    "settings": { "executionOrder": "v1" }
+  },
+  "activate": false,
+  "updateExisting": true
+}
+```
+
+Deployment behavior:
+
+- `updateExisting` defaults to `true`.
+- When a workflow with the same name exists, the server updates it with `PATCH`.
+- When no workflow matches, the server creates it with `POST`.
+- Set `updateExisting: false` to always create a new workflow.
+- Read-only fields such as `id`, `active`, `tags`, and timestamps are stripped before deploy.
+- Settings are filtered to n8n API-safe fields before deploy.
+
+For production automation, prefer unique workflow names or explicit workflow IDs to avoid accidental name collisions.
+
+## Idiomatic design principles
+
+1. **Native nodes over HTTP Request** — use nodes such as Bitrix24, Telegram, Microsoft Teams, Outlook, Google Sheets, and Google Drive before raw HTTP.
+2. **Credential references** — configure credentials in n8n and reference placeholder IDs/names; never hardcode secrets.
+3. **Set nodes for simple transforms** — use Code only for loops, grouping, custom algorithms, binary work, or complex JavaScript.
+4. **AI Agent pattern** — use `@n8n/n8n-nodes-langchain.agent` plus model, memory, tool, and vector-store sub-nodes.
+5. **Error workflows** — create a separate Error Trigger workflow and reference it through `settings.errorWorkflow`.
+6. **Sub-workflows** — reuse shared logic with `executeWorkflow`.
+7. **Community nodes deliberately** — document required community nodes such as docxtemplater or Qdrant before deployment.
+
+## Credential handling
+
+Generated workflows use credential placeholders like this:
+
+```typescript
+@node({
+    name: 'Send Telegram Alert',
+    type: 'n8n-nodes-base.telegram',
+    credentials: {
+        telegramApi: {
+            id: 'TELEGRAM_CREDENTIAL_ID',
+            name: 'Telegram Bot'
+        }
+    }
+})
+TelegramAlert = {
+    operation: 'sendMessage',
+    chatId: '={{ $env.TG_ERROR_CHAT_ID }}',
+    text: '=n8n update: {{ $json.summary }}'
+};
+```
+
+Replace placeholder IDs with credential IDs from the target n8n instance before deployment.
+
+## Testing and verification
+
+```bash
+cd mcp-server
+npm run build
+npm test
+```
+
+The integration tests cover:
+
+- decorator TypeScript generation and compilation
+- SDK-normalized JSON output
+- official SDK validation
+- update-existing deploy behavior and deploy settings filtering
+
+## Security notes
+
+- Keep `N8N_API_KEY` out of workflow JSON and source-controlled files.
+- Treat auto-deploy as privileged; generated workflows can call external services if allowed nodes are present.
+- Use human review or node allowlists before deploying workflows generated from untrusted prompts.
+- Use unique workflow names when `updateExisting` is enabled.
+- Run dependency audits before production releases.
 
 ## License
 

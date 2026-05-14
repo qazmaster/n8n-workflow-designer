@@ -2,15 +2,16 @@
 name: n8n-workflow-designer
 description: >
   Design, compile, and deploy n8n workflows from natural language descriptions.
-  Transforms ideas into production-ready n8n automations using TypeScript decorators
-  and deploys them to any n8n instance via REST API.
+  Transforms ideas into production-ready n8n automations using TypeScript decorators,
+  SDK-normalized workflow JSON, validation, and the n8n REST API.
   
   Capabilities:
   - Natural language → workflow design (triggers, nodes, connections, error handling)
   - TypeScript code generation with @n8n-as-code/transformer decorators
+  - Optional SDK-normalized JSON generation with @n8n/workflow-sdk
   - Compilation to n8n JSON format
-  - Deployment to n8n instances with credential management
-  - Workflow validation and testing
+  - Deployment to n8n instances with credential management and update-existing support
+  - Workflow validation with idiomatic checks and official SDK validation
   
   Triggers on: n8n workflow, create automation, design workflow, deploy workflow,
   build n8n automation, workflow idea, n8n integration, Bitrix24 automation,
@@ -19,26 +20,48 @@ description: >
 
 # n8n Workflow Designer
 
-Design, compile, and deploy n8n workflows from natural language descriptions using the n8n-as-code TypeScript format.
+Design, validate, compile, and deploy n8n workflows from natural language descriptions using the n8n-as-code TypeScript format and optional SDK-normalized JSON.
 
 ## Overview
 
 This skill enables end-to-end n8n workflow creation:
 
 ```
-Natural Language Idea → Workflow Design → TypeScript Code → n8n JSON → Deployed Workflow
+Natural Language Idea → Workflow Design → TypeScript or SDK JSON → Validation → n8n JSON → Deployed Workflow
 ```
 
 ## Prerequisites
 
-```bash
-# n8n-as-code transformer (for compilation)
-npm install @n8n-as-code/transformer
+The companion MCP server includes the required packages:
 
-# Environment variables
+- `@n8n-as-code/transformer` for decorator TypeScript compilation
+- `@n8n/workflow-sdk` for SDK-normalized JSON and official validation
+- `n8n-workflow` for official n8n workflow/node types
+
+Deployment requires a running n8n instance:
+
+```bash
 export N8N_API_KEY="your-api-key"
 export N8N_BASE_URL="https://your-n8n-instance.com"
 ```
+
+## MCP Tool Usage
+
+Use these tools in order for a safe workflow lifecycle:
+
+1. `design_workflow` — create decorator TypeScript by default, or set `outputFormat` to `sdk-json` / `both`.
+2. `compile_workflow` — compile decorator TypeScript to n8n JSON with `@n8n-as-code/transformer`.
+3. `validate_workflow` — validate TypeScript idioms and run official SDK validation for complete JSON.
+4. `deploy_workflow` — deploy JSON, updating an existing workflow by name unless `updateExisting: false`.
+5. `list_workflows` / `get_workflow` — inspect deployed workflows.
+
+`design_workflow.outputFormat`:
+
+| Value | Use when |
+|---|---|
+| `decorator-typescript` | Humans or agents will review/edit the workflow. This is the default. |
+| `sdk-json` | The caller wants SDK-normalized JSON directly. |
+| `both` | You need reviewable TypeScript plus JSON for inspection. |
 
 ## Workflow Design Process
 
@@ -94,19 +117,22 @@ Use `n8n-nodes-base.httpRequest` only when no maintained native or community nod
 Authenticated nodes must include a `credentials` object with placeholder IDs/names that match n8n credential types. Never hardcode API keys, webhook tokens, OAuth bearer tokens, or bot tokens in URLs or headers.
 
 ```typescript
-@node({ name: 'Notify Teams', type: 'n8n-nodes-base.microsoftTeams' })
-NotifyTeams = {
-    resource: 'chatMessage',
-    operation: 'create',
-    teamId: '={{ $env.TEAMS_TEAM_ID }}',
-    channelId: '={{ $env.TEAMS_CHANNEL_ID }}',
-    message: '=Lead created: {{ $json.deal_title }}',
+@node({
+    name: 'Notify Teams',
+    type: 'n8n-nodes-base.microsoftTeams',
     credentials: {
         microsoftTeamsOAuth2Api: {
             id: 'MICROSOFT_TEAMS_CREDENTIAL_ID',
             name: 'Microsoft Teams account'
         }
     }
+})
+NotifyTeams = {
+    resource: 'chatMessage',
+    operation: 'create',
+    teamId: '={{ $env.TEAMS_TEAM_ID }}',
+    channelId: '={{ $env.TEAMS_CHANNEL_ID }}',
+    message: '=Lead created: {{ $json.deal_title }}'
 };
 ```
 
@@ -122,10 +148,13 @@ AI workflows should use a main `@n8n/n8n-nodes-langchain.agent` node and sub-nod
 @node({ name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent' })
 Agent = { text: '={{ $json.summary }}' };
 
-@node({ name: 'OpenAI Model', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi' })
-OpenAIModel = {
-    model: 'gpt-4o-mini',
+@node({
+    name: 'OpenAI Model',
+    type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
     credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI account' } }
+})
+OpenAIModel = {
+    model: 'gpt-4o-mini'
 };
 
 @node({ name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow' })
@@ -167,7 +196,7 @@ Community/optional nodes are allowed when they are the idiomatic fit, but mark i
 
 ### 7. Validate Idiomatic Patterns
 
-Run `validate_workflow` on generated TypeScript or compiled JSON. Treat warnings as design feedback:
+Run `validate_workflow` on generated TypeScript or compiled JSON. When complete JSON is provided, the MCP server also runs `@n8n/workflow-sdk` validation. Treat warnings as design feedback:
 
 - `prefer-native-node` — raw `httpRequest` appears to call an integration with a native node.
 - `missing-credential-reference` — authenticated node lacks credential placeholders.
@@ -175,8 +204,21 @@ Run `validate_workflow` on generated TypeScript or compiled JSON. Treat warnings
 - `ai-agent-missing-model` / `ai-agent-sub-node-linking` — Agent lacks model/sub-node wiring.
 - `missing-error-workflow-reference` — main workflow lacks `settings.errorWorkflow`.
 - `community-node-requirement` — target instance must have the optional/community node installed.
+- `sdk-*` — official SDK validation found a structural issue in complete workflow JSON.
 
-### Step 3: Generate TypeScript Code
+### Step 3: Generate Workflow Output
+
+Prefer decorator TypeScript for reviewable workflows. Use `outputFormat: 'sdk-json'` only when the caller needs JSON directly, and `outputFormat: 'both'` when comparing TypeScript and SDK-normalized JSON.
+
+```json
+{
+    "description": "When a webhook receives a new lead, create a Bitrix24 lead and send a Telegram alert",
+    "workflowName": "Lead Intake",
+    "outputFormat": "decorator-typescript"
+}
+```
+
+### Step 4: Generate TypeScript Code
 
 Use the decorator pattern:
 
@@ -220,7 +262,7 @@ export class MyWorkflow {
 }
 ```
 
-### Step 4: Compile to JSON
+### Step 5: Compile to JSON
 
 ```typescript
 import { TypeScriptParser, WorkflowBuilder } from '@n8n-as-code/transformer';
@@ -232,24 +274,17 @@ const ast = await parser.parseFile('my-workflow.workflow.ts');
 const workflowJson = builder.build(ast);
 ```
 
-### Step 5: Deploy
+### Step 6: Deploy
 
-```typescript
-// Clean read-only fields
-delete workflowJson.id;
-delete workflowJson.active;
-delete workflowJson.tags;
-
-// Deploy
-const response = await fetch(`${N8N_BASE_URL}/api/v1/workflows`, {
-    method: 'POST',
-    headers: {
-        'X-N8N-API-KEY': N8N_API_KEY,
-        'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(workflowJson)
-});
+```json
+{
+    "workflowJson": { "name": "Workflow Name", "nodes": [], "connections": {} },
+    "activate": false,
+    "updateExisting": true
+}
 ```
+
+Deploy strips read-only fields and filters settings before sending data to n8n. With `updateExisting: true` (the default), it updates a workflow with the same name via `PATCH`; use `updateExisting: false` to always create a new workflow.
 
 ## Design Patterns
 
@@ -265,7 +300,7 @@ export class SecureWebhookWorkflow {
     AuthGuard = {
         conditions: {
             boolean: [{
-                value1: "={{ $json.headers['x-api-key'] === 'SECRET' }}",
+                value1: "={{ $json.headers['x-api-key'] === $env.WEBHOOK_API_KEY }}",
                 value2: true
             }]
         }
@@ -282,12 +317,15 @@ export class SecureWebhookWorkflow {
         }
     };
 
-    @node({ name: 'Error Alert', type: 'n8n-nodes-base.telegram' })
+    @node({
+        name: 'Error Alert',
+        type: 'n8n-nodes-base.telegram',
+        credentials: { telegramApi: { id: 'TELEGRAM_CREDENTIAL_ID', name: 'Telegram Bot' } }
+    })
     ErrorAlert = {
         operation: 'sendMessage',
         chatId: '={{ $env.TG_ERROR_CHAT_ID }}',
-        text: '=Auth failed',
-        credentials: { telegramApi: { id: 'TELEGRAM_CREDENTIAL_ID', name: 'Telegram Bot' } }
+        text: '=Auth failed'
     };
 
     @links()
@@ -315,20 +353,26 @@ export class ScheduledAiWorkflow {
         text: '=Analyze this data and return a short report: {{ JSON.stringify($json) }}'
     };
 
-    @node({ name: 'OpenAI Model', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi' })
-    OpenAIModel = {
-        model: 'gpt-4o-mini',
+    @node({
+        name: 'OpenAI Model',
+        type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
         credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI account' } }
+    })
+    OpenAIModel = {
+        model: 'gpt-4o-mini'
     };
 
-    @node({ name: 'Send Report', type: 'n8n-nodes-base.microsoftTeams' })
+    @node({
+        name: 'Send Report',
+        type: 'n8n-nodes-base.microsoftTeams',
+        credentials: { microsoftTeamsOAuth2Api: { id: 'MICROSOFT_TEAMS_CREDENTIAL_ID', name: 'Microsoft Teams account' } }
+    })
     SendReport = {
         resource: 'chatMessage',
         operation: 'create',
         teamId: '={{ $env.TEAMS_TEAM_ID }}',
         channelId: '={{ $env.TEAMS_CHANNEL_ID }}',
-        message: '=AI report: {{ $json.output }}',
-        credentials: { microsoftTeamsOAuth2Api: { id: 'MICROSOFT_TEAMS_CREDENTIAL_ID', name: 'Microsoft Teams account' } }
+        message: '=AI report: {{ $json.output }}'
     };
 
     @links()
@@ -352,8 +396,12 @@ export class AiAgentWorkflow {
     @node({ name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent' })
     Agent = {};
 
-    @node({ name: 'OpenAI', type: '@n8n/n8n-nodes-langchain.lmChatOpenAi' })
-    OpenAI = { credentials: { openAiApi: { id: 'cred-id', name: 'OpenAI' } } };
+    @node({
+        name: 'OpenAI',
+        type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
+        credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI' } }
+    })
+    OpenAI = { model: 'gpt-4o-mini' };
 
     @node({ name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow' })
     Memory = {};
@@ -433,12 +481,15 @@ export class BitrixLeadWorkflow {
         }
     };
 
-    @node({ name: 'Create Lead', type: 'n8n-nodes-base.bitrix24' })
+    @node({
+        name: 'Create Lead',
+        type: 'n8n-nodes-base.bitrix24',
+        credentials: { bitrix24OAuth2Api: { id: 'BITRIX24_CREDENTIAL_ID', name: 'Bitrix24 account' } }
+    })
     CreateLead = {
         resource: 'lead',
         operation: 'create',
-        fields: { TITLE: '={{ $json.title }}', PHONE: [{ VALUE: '={{ $json.phone }}' }] },
-        credentials: { bitrix24OAuth2Api: { id: 'BITRIX24_CREDENTIAL_ID', name: 'Bitrix24 account' } }
+        fields: { TITLE: '={{ $json.title }}', PHONE: [{ VALUE: '={{ $json.phone }}' }] }
     };
 
     @links()

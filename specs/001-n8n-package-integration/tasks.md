@@ -7,3 +7,4 @@
 - [x] Adopt official workflow/node types in validation and deploy/list surfaces.
 - [x] Remove unsafe `as any` MCP argument dispatch.
 - [x] Run build, diagnostics, and targeted runtime checks.
+- [x] Update README and skill docs for SDK JSON, validation, and deploy behavior.
