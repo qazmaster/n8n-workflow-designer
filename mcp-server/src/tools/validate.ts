@@ -4,10 +4,18 @@ import {
   type WorkflowJSON,
   type ValidationResult as SdkValidationResult,
 } from '@n8n/workflow-sdk';
+import {
+  communityInstallHintFor,
+  communityPackageFor,
+  credentialRequirementsFor,
+  NODE_REGISTRY,
+  validateNodeAgainstRegistry,
+} from './node-registry.js';
 
 export interface ValidateWorkflowArgs {
   typescriptCode?: string;
   workflowJson?: Partial<WorkflowJSON> & { nodes?: Array<Partial<NodeJSON>> };
+  schemaValidation?: 'off' | 'known-node-registry';
 }
 
 export interface ValidationIssue {
@@ -38,24 +46,6 @@ const NATIVE_ALTERNATIVES: Array<{ pattern: RegExp; nativeType: string; label: s
   { pattern: /slack/i, nativeType: 'n8n-nodes-base.slack', label: 'Slack' },
 ];
 
-const CREDENTIAL_REQUIRED: Record<string, string[]> = {
-  'n8n-nodes-base.bitrix24': ['bitrix24OAuth2Api'],
-  'n8n-nodes-base.microsoftTeams': ['microsoftTeamsOAuth2Api'],
-  'n8n-nodes-base.microsoftOutlook': ['microsoftOutlookOAuth2Api'],
-  'n8n-nodes-base.microsoftOutlookTrigger': ['microsoftOutlookOAuth2Api'],
-  'n8n-nodes-base.telegram': ['telegramApi'],
-  'n8n-nodes-base.telegramTrigger': ['telegramApi'],
-  'n8n-nodes-base.googleSheets': ['googleSheetsOAuth2Api'],
-  'n8n-nodes-base.googleDrive': ['googleDriveOAuth2Api'],
-  '@n8n/n8n-nodes-langchain.lmChatOpenAi': ['openAiApi'],
-  '@n8n/n8n-nodes-langchain.vectorStoreQdrant': ['qdrantApi'],
-};
-
-const COMMUNITY_NODES: Record<string, string> = {
-  'n8n-nodes-docxtemplater.docxtemplater': 'Install n8n-nodes-docxtemplater before import/deploy.',
-  '@n8n/n8n-nodes-langchain.vectorStoreQdrant': 'Verify Qdrant node support and credentials in the target n8n instance.',
-};
-
 export async function validateWorkflow(args: ValidateWorkflowArgs): Promise<ValidationResult> {
   const issues: ValidationIssue[] = [];
 
@@ -75,7 +65,7 @@ export async function validateWorkflow(args: ValidateWorkflowArgs): Promise<Vali
 
   if (args.workflowJson) {
     validateWithWorkflowSdk(args.workflowJson, issues);
-    validateWorkflowJson(args.workflowJson, issues);
+    validateWorkflowJson(args.workflowJson, issues, args.schemaValidation || 'known-node-registry');
   }
 
   return buildResult(issues);
@@ -90,7 +80,11 @@ function validateTypeScript(code: string, issues: ValidationIssue[]): void {
   validateCredentialReferencesInText(code, issues);
 }
 
-function validateWorkflowJson(workflow: NonNullable<ValidateWorkflowArgs['workflowJson']>, issues: ValidationIssue[]): void {
+function validateWorkflowJson(
+  workflow: NonNullable<ValidateWorkflowArgs['workflowJson']>,
+  issues: ValidationIssue[],
+  schemaValidation: NonNullable<ValidateWorkflowArgs['schemaValidation']>,
+): void {
   const nodes = workflow.nodes || [];
 
   for (const node of nodes) {
@@ -100,9 +94,10 @@ function validateWorkflowJson(workflow: NonNullable<ValidateWorkflowArgs['workfl
       addHttpRequestAlternativeIssue(serialized, issues, node.name);
     }
 
-    if (node.type && CREDENTIAL_REQUIRED[node.type]) {
+    if (node.type) {
+      const requiredCredentials = credentialRequirementsFor(node.type);
       const credentialKeys = Object.keys(node.credentials || {});
-      const missing = CREDENTIAL_REQUIRED[node.type].filter((key) => !credentialKeys.includes(key));
+      const missing = requiredCredentials.filter((key) => !credentialKeys.includes(key));
       if (missing.length > 0) {
         issues.push({
           severity: 'warning',
@@ -118,15 +113,36 @@ function validateWorkflowJson(workflow: NonNullable<ValidateWorkflowArgs['workfl
       issues.push(createSetNodeIssue(node.name));
     }
 
-    if (node.type && COMMUNITY_NODES[node.type]) {
+    if (node.type && communityPackageFor(node.type)) {
       issues.push({
         severity: 'info',
         code: 'community-node-requirement',
         node: node.name,
         message: `${node.type} is a community or optional node.`,
-        recommendation: COMMUNITY_NODES[node.type],
+        recommendation: communityInstallHintFor(node.type) || `Verify ${communityPackageFor(node.type)} is available in the target n8n instance.`,
       });
     }
+
+    if (schemaValidation === 'known-node-registry') {
+      for (const registryIssue of validateNodeAgainstRegistry(node)) {
+        issues.push({
+          severity: registryIssue.code === 'unknown-node-type' ? 'info' : 'warning',
+          code: `registry-${registryIssue.code}`,
+          node: node.name,
+          message: registryIssue.message,
+          recommendation: registryIssue.recommendation,
+        });
+      }
+    }
+  }
+
+  if (schemaValidation === 'known-node-registry') {
+    issues.push({
+      severity: 'info',
+      code: 'schema-registry-partial',
+      message: 'Local schema validation used the known-node registry. Full n8n node schema validation still requires wiring node description directories into @n8n/workflow-sdk.',
+      recommendation: 'Use this registry check for early feedback, then validate against a target n8n instance before production deployment.',
+    });
   }
 
   if (!workflow.settings?.errorWorkflow) {
@@ -256,24 +272,29 @@ function validateSetVsCode(code: string, issues: ValidationIssue[]): void {
 }
 
 function validateCommunityNodes(code: string, issues: ValidationIssue[]): void {
-  for (const [nodeType, recommendation] of Object.entries(COMMUNITY_NODES)) {
+  for (const [nodeType, entry] of Object.entries(NODE_REGISTRY)) {
     if (code.includes(nodeType)) {
+      const communityPackage = communityPackageFor(nodeType);
+      if (!communityPackage) {
+        continue;
+      }
       issues.push({
         severity: 'info',
         code: 'community-node-requirement',
         message: `${nodeType} is a community or optional node.`,
-        recommendation,
+        recommendation: entry.installHint || `Verify ${communityPackage} is available in the target n8n instance.`,
       });
     }
   }
 }
 
 function validateCredentialReferencesInText(code: string, issues: ValidationIssue[]): void {
-  for (const [nodeType, credentialKeys] of Object.entries(CREDENTIAL_REQUIRED)) {
+  for (const nodeType of Object.keys(NODE_REGISTRY)) {
     if (!code.includes(nodeType)) {
       continue;
     }
 
+    const credentialKeys = credentialRequirementsFor(nodeType);
     const missing = credentialKeys.filter((key) => !code.includes(key));
     if (missing.length > 0) {
       issues.push({

@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { workflow as sdkWorkflow, type NodeJSON, type WorkflowJSON } from '@n8n/workflow-sdk';
+import { CREDENTIAL_PLACEHOLDERS, communityPackageFor } from './node-registry.js';
 
 export interface DesignWorkflowArgs {
   description: string;
@@ -35,44 +36,6 @@ interface WorkflowPlan {
   errorWorkflowId?: string;
   nodes: WorkflowNode[];
 }
-
-const CREDENTIAL_PLACEHOLDERS: Record<string, Record<string, { id: string; name: string }>> = {
-  'n8n-nodes-base.bitrix24': {
-    bitrix24OAuth2Api: { id: 'BITRIX24_CREDENTIAL_ID', name: 'Bitrix24 account' },
-  },
-  'n8n-nodes-base.microsoftTeams': {
-    microsoftTeamsOAuth2Api: { id: 'MICROSOFT_TEAMS_CREDENTIAL_ID', name: 'Microsoft Teams account' },
-  },
-  'n8n-nodes-base.microsoftOutlook': {
-    microsoftOutlookOAuth2Api: { id: 'MICROSOFT_OUTLOOK_CREDENTIAL_ID', name: 'Microsoft Outlook account' },
-  },
-  'n8n-nodes-base.microsoftOutlookTrigger': {
-    microsoftOutlookOAuth2Api: { id: 'MICROSOFT_OUTLOOK_CREDENTIAL_ID', name: 'Microsoft Outlook account' },
-  },
-  'n8n-nodes-base.telegram': {
-    telegramApi: { id: 'TELEGRAM_CREDENTIAL_ID', name: 'Telegram Bot' },
-  },
-  'n8n-nodes-base.telegramTrigger': {
-    telegramApi: { id: 'TELEGRAM_CREDENTIAL_ID', name: 'Telegram Bot' },
-  },
-  'n8n-nodes-base.googleSheets': {
-    googleSheetsOAuth2Api: { id: 'GOOGLE_SHEETS_CREDENTIAL_ID', name: 'Google Sheets account' },
-  },
-  'n8n-nodes-base.googleDrive': {
-    googleDriveOAuth2Api: { id: 'GOOGLE_DRIVE_CREDENTIAL_ID', name: 'Google Drive account' },
-  },
-  '@n8n/n8n-nodes-langchain.lmChatOpenAi': {
-    openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI account' },
-  },
-  '@n8n/n8n-nodes-langchain.vectorStoreQdrant': {
-    qdrantApi: { id: 'QDRANT_CREDENTIAL_ID', name: 'Qdrant account' },
-  },
-};
-
-const COMMUNITY_NODE_PACKAGES: Record<string, string> = {
-  'n8n-nodes-docxtemplater.docxtemplater': 'n8n-nodes-docxtemplater',
-  '@n8n/n8n-nodes-langchain.vectorStoreQdrant': 'built-in LangChain Qdrant node or installed Qdrant community package',
-};
 
 export async function designWorkflow(args: DesignWorkflowArgs): Promise<string> {
   const {
@@ -370,7 +333,7 @@ function createDocxtemplaterNode(index: number, enabled: boolean): WorkflowNode 
     version: 1,
     position: positionFor(index),
     role: 'main',
-    communityPackage: COMMUNITY_NODE_PACKAGES['n8n-nodes-docxtemplater.docxtemplater'],
+    communityPackage: communityPackageFor('n8n-nodes-docxtemplater.docxtemplater'),
     config: {
       templateFile: '={{ $binary.template }}',
       data: '={{ $json }}',
@@ -441,7 +404,7 @@ function createQdrantNode(index: number, enabled: boolean, asSubNode: boolean): 
     position: asSubNode ? [positionFor(index)[0] + 440, 520] : positionFor(index),
     role: asSubNode ? 'aiSubNode' : 'main',
     aiRole: asSubNode ? 'ai_vectorStore' : undefined,
-    communityPackage: COMMUNITY_NODE_PACKAGES['@n8n/n8n-nodes-langchain.vectorStoreQdrant'],
+    communityPackage: communityPackageFor('@n8n/n8n-nodes-langchain.vectorStoreQdrant'),
     config: {
       mode: 'retrieve',
       qdrantCollection: '={{ $env.QDRANT_COLLECTION }}',
