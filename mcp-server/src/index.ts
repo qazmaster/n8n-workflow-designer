@@ -10,7 +10,16 @@ import type { NodeJSON, WorkflowJSON } from '@n8n/workflow-sdk';
 import { designWorkflow, type DesignWorkflowArgs } from './tools/design.js';
 import { compileWorkflow, type CompileWorkflowArgs } from './tools/compile.js';
 import { deployWorkflow, type DeployWorkflowArgs } from './tools/deploy.js';
+import { executeWorkflow, type ExecuteWorkflowArgs } from './tools/execute.js';
 import { listWorkflows, getWorkflow } from './tools/list.js';
+import {
+  exportWorkflow,
+  importWorkflow,
+  listCommunityPackages,
+  listCredentials,
+  type ExportWorkflowArgs,
+  type ImportWorkflowArgs,
+} from './tools/transfer.js';
 import { validateWorkflow, type ValidateWorkflowArgs } from './tools/validate.js';
 
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -119,9 +128,84 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'boolean',
               description: 'Whether to update existing workflow by name instead of creating duplicate (default: true)',
             },
+            workflowId: {
+              type: 'string',
+              description: 'Explicit n8n workflow ID to update. When provided, deploy uses update-by-ID semantics.',
+            },
+            mode: {
+              type: 'string',
+              enum: ['upsert-by-name', 'update-by-id', 'create'],
+              description: 'Deployment strategy. Defaults to update by name unless updateExisting is false or workflowId is provided.',
+            },
+            dryRun: {
+              type: 'boolean',
+              description: 'Return sanitized deployment payload and strategy without calling create/update endpoints.',
+            },
+            confirmMutation: {
+              type: 'boolean',
+              description: 'Required to create, update, or activate workflows. Use dryRun first for non-mutating inspection.',
+            },
           },
           required: ['workflowJson'],
         },
+      },
+      {
+        name: 'execute_workflow',
+        description: 'Manually execute a workflow through the n8n REST API and optionally poll execution status.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowId: { type: 'string', description: 'n8n workflow ID to execute.' },
+            endpoint: { type: 'string', enum: ['execute', 'run'], description: 'Execution endpoint style. Use execute for current public API; run for compatible instances.' },
+            workflowData: { type: 'object', description: 'Workflow data payload for run endpoint compatibility.' },
+            startNodes: { type: 'array', items: { type: 'string' }, description: 'Optional node names to start execution from.' },
+            destinationNode: { type: 'string', description: 'Optional destination node to execute up to.' },
+            inputData: { description: 'Optional input data for manual execution.' },
+            waitForCompletion: { type: 'boolean', description: 'Poll /executions/{id} until the execution finishes.' },
+            pollIntervalMs: { type: 'number', description: 'Polling interval in milliseconds.' },
+            timeoutMs: { type: 'number', description: 'Maximum polling duration in milliseconds.' },
+            confirmMutation: { type: 'boolean', description: 'Required to execute workflows because execution can trigger external side effects.' },
+          },
+          required: ['workflowId'],
+        },
+      },
+      {
+        name: 'export_workflow',
+        description: 'Fetch a workflow by ID and return portable JSON for review or re-import.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowId: { type: 'string', description: 'n8n workflow ID to export.' },
+            includeMetadata: { type: 'boolean', description: 'Include instance metadata such as timestamps and sharing info.' },
+          },
+          required: ['workflowId'],
+        },
+      },
+      {
+        name: 'import_workflow',
+        description: 'Import workflow JSON using the same safe create/update semantics as deploy_workflow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: { type: 'object', description: 'Workflow JSON to import.' },
+            workflowId: { type: 'string', description: 'Explicit workflow ID for update-by-ID imports.' },
+            mode: { type: 'string', enum: ['upsert-by-name', 'update-by-id', 'create'], description: 'Import strategy.' },
+            activate: { type: 'boolean', description: 'Activate after import.' },
+            dryRun: { type: 'boolean', description: 'Return the sanitized import plan without mutating n8n.' },
+            confirmMutation: { type: 'boolean', description: 'Required to create, update, or activate workflows during import.' },
+          },
+          required: ['workflowJson'],
+        },
+      },
+      {
+        name: 'list_credentials',
+        description: 'List credential metadata from n8n for resolving workflow credential placeholders. Secret data is not returned by n8n and is redacted defensively.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      {
+        name: 'list_community_packages',
+        description: 'List installed community packages from the target n8n instance.',
+        inputSchema: { type: 'object', properties: {} },
       },
       {
         name: 'list_workflows',
@@ -158,6 +242,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             workflowJson: {
               type: 'object',
               description: 'Compiled JSON to validate (alternative to typescriptCode)',
+            },
+            schemaValidation: {
+              type: 'string',
+              enum: ['off', 'known-node-registry'],
+              description: 'Run local known-node registry checks for required parameters and supported community nodes. Defaults to known-node-registry.',
             },
           },
           required: [],
@@ -198,6 +287,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'deploy_workflow': {
         const result = await deployWorkflow(parseDeployWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'execute_workflow': {
+        const result = await executeWorkflow(parseExecuteWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'export_workflow': {
+        const result = await exportWorkflow(parseExportWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'import_workflow': {
+        const result = await importWorkflow(parseImportWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'list_credentials': {
+        const result = await listCredentials(N8N_BASE_URL, N8N_API_KEY);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'list_community_packages': {
+        const result = await listCommunityPackages(N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
             {
@@ -290,6 +439,48 @@ function parseDeployWorkflowArgs(args: unknown): DeployWorkflowArgs {
     workflowJson,
     activate: optionalBoolean(input.activate, 'activate'),
     updateExisting: optionalBoolean(input.updateExisting, 'updateExisting'),
+    workflowId: optionalString(input.workflowId, 'workflowId'),
+    mode: optionalEnum(input.mode, ['upsert-by-name', 'update-by-id', 'create'], 'mode'),
+    dryRun: optionalBoolean(input.dryRun, 'dryRun'),
+    confirmMutation: optionalBoolean(input.confirmMutation, 'confirmMutation'),
+  };
+}
+
+function parseExecuteWorkflowArgs(args: unknown): ExecuteWorkflowArgs {
+  const input = objectArgs(args);
+  return {
+    workflowId: requiredString(input.workflowId, 'workflowId'),
+    workflowData: optionalRecord(input.workflowData, 'workflowData'),
+    startNodes: optionalStringArray(input.startNodes, 'startNodes'),
+    destinationNode: optionalString(input.destinationNode, 'destinationNode'),
+    inputData: input.inputData,
+    endpoint: optionalEnum(input.endpoint, ['execute', 'run'], 'endpoint'),
+    waitForCompletion: optionalBoolean(input.waitForCompletion, 'waitForCompletion'),
+    pollIntervalMs: optionalNumber(input.pollIntervalMs, 'pollIntervalMs'),
+    timeoutMs: optionalNumber(input.timeoutMs, 'timeoutMs'),
+    confirmMutation: optionalBoolean(input.confirmMutation, 'confirmMutation'),
+  };
+}
+
+function parseExportWorkflowArgs(args: unknown): ExportWorkflowArgs {
+  const input = objectArgs(args);
+  return {
+    workflowId: requiredString(input.workflowId, 'workflowId'),
+    includeMetadata: optionalBoolean(input.includeMetadata, 'includeMetadata'),
+  };
+}
+
+function parseImportWorkflowArgs(args: unknown): ImportWorkflowArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+  return {
+    workflowJson,
+    workflowId: optionalString(input.workflowId, 'workflowId'),
+    mode: optionalEnum(input.mode, ['upsert-by-name', 'update-by-id', 'create'], 'mode'),
+    activate: optionalBoolean(input.activate, 'activate'),
+    dryRun: optionalBoolean(input.dryRun, 'dryRun'),
+    confirmMutation: optionalBoolean(input.confirmMutation, 'confirmMutation'),
   };
 }
 
@@ -307,6 +498,7 @@ function parseValidateWorkflowArgs(args: unknown): ValidateWorkflowArgs {
   return {
     typescriptCode: optionalString(input.typescriptCode, 'typescriptCode'),
     workflowJson,
+    schemaValidation: optionalEnum(input.schemaValidation, ['off', 'known-node-registry'], 'schemaValidation'),
   };
 }
 
@@ -347,6 +539,36 @@ function optionalBoolean(value: unknown, fieldName: string): boolean | undefined
   }
   if (typeof value !== 'boolean') {
     throw new ArgumentError(`${fieldName} must be a boolean when provided.`);
+  }
+  return value;
+}
+
+function optionalNumber(value: unknown, fieldName: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new ArgumentError(`${fieldName} must be a finite number when provided.`);
+  }
+  return value;
+}
+
+function optionalStringArray(value: unknown, fieldName: string): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new ArgumentError(`${fieldName} must be an array of strings when provided.`);
+  }
+  return value;
+}
+
+function optionalRecord(value: unknown, fieldName: string): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isObjectRecord(value)) {
+    throw new ArgumentError(`${fieldName} must be an object when provided.`);
   }
   return value;
 }
