@@ -1,0 +1,36 @@
+{
+  "name": "n8n-workflow-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for n8n workflow design, compilation, and deployment",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "n8n-workflow-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@n8n-as-code/transformer": "^1.1.0",
+    "typescript": "^5.3.0",
+    "uuid": "^9.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.0",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "n8n",
+    "workflow",
+    "automation",
+    "n8n-as-code"
+  ],
+  "license": "MIT"
+}
