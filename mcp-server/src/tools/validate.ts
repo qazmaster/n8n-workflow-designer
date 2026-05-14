@@ -1,20 +1,16 @@
-interface ValidateWorkflowArgs {
+import {
+  validateWorkflow as validateSdkWorkflow,
+  type NodeJSON,
+  type WorkflowJSON,
+  type ValidationResult as SdkValidationResult,
+} from '@n8n/workflow-sdk';
+
+export interface ValidateWorkflowArgs {
   typescriptCode?: string;
-  workflowJson?: {
-    nodes?: WorkflowJsonNode[];
-    settings?: Record<string, unknown>;
-    connections?: Record<string, unknown>;
-  };
+  workflowJson?: Partial<WorkflowJSON> & { nodes?: Array<Partial<NodeJSON>> };
 }
 
-interface WorkflowJsonNode {
-  name?: string;
-  type?: string;
-  parameters?: Record<string, unknown>;
-  credentials?: Record<string, unknown>;
-}
-
-interface ValidationIssue {
+export interface ValidationIssue {
   severity: 'error' | 'warning' | 'info';
   code: string;
   message: string;
@@ -22,7 +18,7 @@ interface ValidationIssue {
   recommendation: string;
 }
 
-interface ValidationResult {
+export interface ValidationResult {
   valid: boolean;
   score: number;
   errors: ValidationIssue[];
@@ -78,6 +74,7 @@ export async function validateWorkflow(args: ValidateWorkflowArgs): Promise<Vali
   }
 
   if (args.workflowJson) {
+    validateWithWorkflowSdk(args.workflowJson, issues);
     validateWorkflowJson(args.workflowJson, issues);
   }
 
@@ -141,6 +138,48 @@ function validateWorkflowJson(workflow: NonNullable<ValidateWorkflowArgs['workfl
   if (hasAgent && !hasModel) {
     issues.push(createAiModelIssue());
   }
+}
+
+function validateWithWorkflowSdk(workflow: NonNullable<ValidateWorkflowArgs['workflowJson']>, issues: ValidationIssue[]): void {
+  if (!isCompleteWorkflowJson(workflow)) {
+    issues.push({
+      severity: 'info',
+      code: 'sdk-validation-skipped',
+      message: 'Official @n8n/workflow-sdk validation was skipped because workflow JSON is partial.',
+      recommendation: 'Pass compiled workflow JSON with name, nodes, and connections to run SDK validation.',
+    });
+    return;
+  }
+
+  const result: SdkValidationResult = validateSdkWorkflow(workflow, {
+    allowDisconnectedNodes: false,
+    allowNoTrigger: false,
+    validateSchema: false,
+  });
+
+  for (const error of result.errors) {
+    issues.push({
+      severity: 'error',
+      code: `sdk-${error.code.toLowerCase()}`,
+      node: error.nodeName,
+      message: error.message,
+      recommendation: 'Fix the workflow structure according to @n8n/workflow-sdk validation before deployment.',
+    });
+  }
+
+  for (const warning of result.warnings) {
+    issues.push({
+      severity: 'warning',
+      code: `sdk-${warning.code.toLowerCase()}`,
+      node: warning.nodeName,
+      message: warning.message,
+      recommendation: 'Review the official @n8n/workflow-sdk validation warning before deployment.',
+    });
+  }
+}
+
+function isCompleteWorkflowJson(workflow: NonNullable<ValidateWorkflowArgs['workflowJson']>): workflow is WorkflowJSON {
+  return typeof workflow.name === 'string' && Array.isArray(workflow.nodes) && typeof workflow.connections === 'object' && workflow.connections !== null;
 }
 
 function validateHttpRequestUsage(code: string, issues: ValidationIssue[]): void {

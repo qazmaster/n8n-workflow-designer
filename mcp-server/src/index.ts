@@ -6,11 +6,12 @@ import {
   ErrorCode,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
-import { designWorkflow } from './tools/design.js';
-import { compileWorkflow } from './tools/compile.js';
-import { deployWorkflow } from './tools/deploy.js';
+import type { NodeJSON, WorkflowJSON } from '@n8n/workflow-sdk';
+import { designWorkflow, type DesignWorkflowArgs } from './tools/design.js';
+import { compileWorkflow, type CompileWorkflowArgs } from './tools/compile.js';
+import { deployWorkflow, type DeployWorkflowArgs } from './tools/deploy.js';
 import { listWorkflows, getWorkflow } from './tools/list.js';
-import { validateWorkflow } from './tools/validate.js';
+import { validateWorkflow, type ValidateWorkflowArgs } from './tools/validate.js';
 
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
 const N8N_BASE_URL = process.env.N8N_BASE_URL || 'http://localhost:5678';
@@ -72,6 +73,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'string',
               enum: ['telegram', 'teams', 'outlook'],
               description: 'Native notification node to use for generated alerts (default: telegram)',
+            },
+            outputFormat: {
+              type: 'string',
+              enum: ['decorator-typescript', 'sdk-json', 'both'],
+              description: 'Return decorator TypeScript, @n8n/workflow-sdk-normalized JSON, or both (default: decorator-typescript)',
             },
           },
           required: ['description'],
@@ -167,7 +173,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'design_workflow': {
-        const result = await designWorkflow(args as any);
+        const result = await designWorkflow(parseDesignWorkflowArgs(args));
         return {
           content: [
             {
@@ -179,7 +185,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'compile_workflow': {
-        const result = await compileWorkflow(args as any);
+        const result = await compileWorkflow(parseCompileWorkflowArgs(args));
         return {
           content: [
             {
@@ -191,7 +197,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'deploy_workflow': {
-        const result = await deployWorkflow(args as any, N8N_BASE_URL, N8N_API_KEY);
+        const result = await deployWorkflow(parseDeployWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
             {
@@ -215,7 +221,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_workflow': {
-        const result = await getWorkflow((args as any).workflowId, N8N_BASE_URL, N8N_API_KEY);
+        const result = await getWorkflow(parseGetWorkflowArgs(args).workflowId, N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
             {
@@ -227,7 +233,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'validate_workflow': {
-        const result = await validateWorkflow(args as any);
+        const result = await validateWorkflow(parseValidateWorkflowArgs(args));
         return {
           content: [
             {
@@ -246,9 +252,164 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new McpError(ErrorCode.InternalError, message);
+    throw new McpError(error instanceof ArgumentError ? ErrorCode.InvalidParams : ErrorCode.InternalError, message);
   }
 });
+
+class ArgumentError extends Error {}
+
+function parseDesignWorkflowArgs(args: unknown): DesignWorkflowArgs {
+  const input = objectArgs(args);
+  const description = requiredString(input.description, 'description');
+  return {
+    description,
+    workflowId: optionalString(input.workflowId, 'workflowId'),
+    workflowName: optionalString(input.workflowName, 'workflowName'),
+    includeErrorHandling: optionalBoolean(input.includeErrorHandling, 'includeErrorHandling'),
+    errorWorkflowId: optionalString(input.errorWorkflowId, 'errorWorkflowId'),
+    idiomaticMode: optionalBoolean(input.idiomaticMode, 'idiomaticMode'),
+    enableCommunityNodes: optionalBoolean(input.enableCommunityNodes, 'enableCommunityNodes'),
+    preferredNotificationChannel: optionalEnum(input.preferredNotificationChannel, ['telegram', 'teams', 'outlook'], 'preferredNotificationChannel'),
+    outputFormat: optionalEnum(input.outputFormat, ['decorator-typescript', 'sdk-json', 'both'], 'outputFormat'),
+  };
+}
+
+function parseCompileWorkflowArgs(args: unknown): CompileWorkflowArgs {
+  const input = objectArgs(args);
+  return {
+    typescriptCode: optionalString(input.typescriptCode, 'typescriptCode'),
+    filePath: optionalString(input.filePath, 'filePath'),
+  };
+}
+
+function parseDeployWorkflowArgs(args: unknown): DeployWorkflowArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+  return {
+    workflowJson,
+    activate: optionalBoolean(input.activate, 'activate'),
+    updateExisting: optionalBoolean(input.updateExisting, 'updateExisting'),
+  };
+}
+
+function parseGetWorkflowArgs(args: unknown): { workflowId: string } {
+  const input = objectArgs(args);
+  return { workflowId: requiredString(input.workflowId, 'workflowId') };
+}
+
+function parseValidateWorkflowArgs(args: unknown): ValidateWorkflowArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  if (workflowJson !== undefined) {
+    assertWorkflowJsonShape(workflowJson, 'workflowJson');
+  }
+  return {
+    typescriptCode: optionalString(input.typescriptCode, 'typescriptCode'),
+    workflowJson,
+  };
+}
+
+function objectArgs(args: unknown): Record<string, unknown> {
+  if (args === undefined || args === null) {
+    return {};
+  }
+  if (!isObjectRecord(args)) {
+    throw new ArgumentError('Tool arguments must be an object.');
+  }
+  return args;
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requiredString(value: unknown, fieldName: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ArgumentError(`${fieldName} must be a non-empty string.`);
+  }
+  return value;
+}
+
+function optionalString(value: unknown, fieldName: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'string') {
+    throw new ArgumentError(`${fieldName} must be a string when provided.`);
+  }
+  return value;
+}
+
+function optionalBoolean(value: unknown, fieldName: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'boolean') {
+    throw new ArgumentError(`${fieldName} must be a boolean when provided.`);
+  }
+  return value;
+}
+
+function optionalEnum<const T extends readonly string[]>(value: unknown, allowed: T, fieldName: string): T[number] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'string' || !allowed.includes(value)) {
+    throw new ArgumentError(`${fieldName} must be one of: ${allowed.join(', ')}.`);
+  }
+  return value;
+}
+
+function assertWorkflowJsonShape(value: unknown, fieldName: string): asserts value is Partial<WorkflowJSON> & { nodes?: Array<Partial<NodeJSON>> } {
+  if (!isObjectRecord(value)) {
+    throw new ArgumentError(`${fieldName} must be an object.`);
+  }
+  if ('name' in value && typeof value.name !== 'string') {
+    throw new ArgumentError(`${fieldName}.name must be a string when provided.`);
+  }
+  if ('nodes' in value) {
+    if (!Array.isArray(value.nodes)) {
+      throw new ArgumentError(`${fieldName}.nodes must be an array when provided.`);
+    }
+    for (const [index, node] of value.nodes.entries()) {
+      assertWorkflowNodeShape(node, `${fieldName}.nodes[${index}]`);
+    }
+  }
+  if ('connections' in value && !isObjectRecord(value.connections)) {
+    throw new ArgumentError(`${fieldName}.connections must be an object when provided.`);
+  }
+  if ('settings' in value && !isObjectRecord(value.settings)) {
+    throw new ArgumentError(`${fieldName}.settings must be an object when provided.`);
+  }
+}
+
+function assertWorkflowNodeShape(value: unknown, fieldName: string): asserts value is Partial<NodeJSON> {
+  if (!isObjectRecord(value)) {
+    throw new ArgumentError(`${fieldName} must be an object.`);
+  }
+  for (const key of ['id', 'name', 'type'] as const) {
+    if (key in value && typeof value[key] !== 'string') {
+      throw new ArgumentError(`${fieldName}.${key} must be a string when provided.`);
+    }
+  }
+  if ('typeVersion' in value && typeof value.typeVersion !== 'number') {
+    throw new ArgumentError(`${fieldName}.typeVersion must be a number when provided.`);
+  }
+  if ('position' in value && !isPositionTuple(value.position)) {
+    throw new ArgumentError(`${fieldName}.position must be a [number, number] tuple when provided.`);
+  }
+  if ('parameters' in value && !isObjectRecord(value.parameters)) {
+    throw new ArgumentError(`${fieldName}.parameters must be an object when provided.`);
+  }
+  if ('credentials' in value && !isObjectRecord(value.credentials)) {
+    throw new ArgumentError(`${fieldName}.credentials must be an object when provided.`);
+  }
+}
+
+function isPositionTuple(value: unknown): value is [number, number] {
+  return Array.isArray(value) && value.length === 2 && value.every((item) => typeof item === 'number');
+}
 
 async function main() {
   const transport = new StdioServerTransport();

@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
+import { workflow as sdkWorkflow, type NodeJSON, type WorkflowJSON } from '@n8n/workflow-sdk';
 
-interface DesignWorkflowArgs {
+export interface DesignWorkflowArgs {
   description: string;
   workflowId?: string;
   workflowName?: string;
@@ -9,9 +10,11 @@ interface DesignWorkflowArgs {
   idiomaticMode?: boolean;
   enableCommunityNodes?: boolean;
   preferredNotificationChannel?: 'telegram' | 'teams' | 'outlook';
+  outputFormat?: 'decorator-typescript' | 'sdk-json' | 'both';
 }
 
 type NodeRole = 'main' | 'aiSubNode' | 'error';
+type WorkflowParameters = NonNullable<NodeJSON['parameters']>;
 
 interface WorkflowNode {
   id: string;
@@ -19,7 +22,8 @@ interface WorkflowNode {
   type: string;
   version: number;
   position: [number, number];
-  config: Record<string, unknown>;
+  config: WorkflowParameters;
+  credentials?: NodeJSON['credentials'];
   role: NodeRole;
   aiRole?: 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_vectorStore';
   communityPackage?: string;
@@ -80,6 +84,7 @@ export async function designWorkflow(args: DesignWorkflowArgs): Promise<string> 
     idiomaticMode = true,
     enableCommunityNodes = true,
     preferredNotificationChannel = 'telegram',
+    outputFormat = 'decorator-typescript',
   } = args;
 
   const id = workflowId || `wf_${uuidv4().split('-')[0]}`;
@@ -97,7 +102,75 @@ export async function designWorkflow(args: DesignWorkflowArgs): Promise<string> 
     preferredNotificationChannel,
   });
 
-  return generateWorkflowCode(plan, description, includeErrorHandling, preferredNotificationChannel);
+  const code = generateWorkflowCode(plan, description, includeErrorHandling, preferredNotificationChannel);
+
+  if (outputFormat === 'decorator-typescript') {
+    return code;
+  }
+
+  const workflowJson = buildSdkWorkflowJson(plan);
+  const serializedWorkflow = JSON.stringify(workflowJson, null, 2);
+
+  if (outputFormat === 'sdk-json') {
+    return serializedWorkflow;
+  }
+
+  return `${code}\n\n/* SDK-normalized workflow JSON generated with @n8n/workflow-sdk\n${serializedWorkflow}\n*/\n`;
+}
+
+function buildSdkWorkflowJson(plan: WorkflowPlan): WorkflowJSON {
+  return sdkWorkflow.fromJSON(buildWorkflowJson(plan)).toJSON({ tidyUp: true });
+}
+
+function buildWorkflowJson(plan: WorkflowPlan): WorkflowJSON {
+  return {
+    id: plan.id,
+    name: plan.name,
+    nodes: plan.nodes.map(toWorkflowJsonNode),
+    connections: buildWorkflowJsonConnections(plan.nodes),
+    settings: {
+      executionOrder: 'v1',
+      callerPolicy: 'workflowsFromSameOwner',
+      ...(plan.errorWorkflowId ? { errorWorkflow: plan.errorWorkflowId } : {}),
+    },
+  };
+}
+
+function toWorkflowJsonNode(workflowNode: WorkflowNode): NodeJSON {
+  return {
+    id: workflowNode.id,
+    name: workflowNode.name,
+    type: workflowNode.type,
+    typeVersion: workflowNode.version,
+    position: workflowNode.position,
+    parameters: workflowNode.config,
+    ...(workflowNode.credentials ? { credentials: workflowNode.credentials } : {}),
+  };
+}
+
+function buildWorkflowJsonConnections(nodes: WorkflowNode[]): WorkflowJSON['connections'] {
+  const connections: WorkflowJSON['connections'] = {};
+  const mainNodes = nodes.filter((workflowNode) => workflowNode.role === 'main');
+
+  for (let index = 0; index < mainNodes.length - 1; index += 1) {
+    connections[mainNodes[index].name] = {
+      main: [[{ node: mainNodes[index + 1].name, type: 'main', index: 0 }]],
+    };
+  }
+
+  const agent = nodes.find((workflowNode) => workflowNode.type === '@n8n/n8n-nodes-langchain.agent');
+  if (agent) {
+    for (const subNode of nodes.filter((workflowNode) => workflowNode.role === 'aiSubNode' && workflowNode.aiRole)) {
+      if (!subNode.aiRole) {
+        continue;
+      }
+      connections[subNode.name] = {
+        [subNode.aiRole]: [[{ node: agent.name, type: subNode.aiRole, index: 0 }]],
+      };
+    }
+  }
+
+  return connections;
 }
 
 function buildWorkflowPlan(args: {
@@ -544,7 +617,12 @@ function generateNodeCode(workflowNode: WorkflowNode, propertyName: string): str
   code += `        name: '${escapeString(workflowNode.name)}',\n`;
   code += `        type: '${workflowNode.type}',\n`;
   code += `        version: ${workflowNode.version},\n`;
-  code += `        position: [${workflowNode.position[0]}, ${workflowNode.position[1]}]\n`;
+  code += `        position: [${workflowNode.position[0]}, ${workflowNode.position[1]}]`;
+  if (workflowNode.credentials) {
+    code += `,\n        credentials: ${formatObject(workflowNode.credentials, 8)}\n`;
+  } else {
+    code += `\n`;
+  }
   code += `    })\n`;
   code += `    ${propertyName} = ${formatObject(workflowNode.config, 4)};\n`;
   return code;
@@ -643,10 +721,7 @@ function withCredentials(workflowNode: WorkflowNode): WorkflowNode {
 
   return {
     ...workflowNode,
-    config: {
-      ...workflowNode.config,
-      credentials,
-    },
+    credentials,
   };
 }
 

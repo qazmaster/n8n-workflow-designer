@@ -1,8 +1,12 @@
-export async function listWorkflows(baseUrl: string, apiKey: string): Promise<unknown> {
+import type { IWorkflowBase } from 'n8n-workflow';
+
+type N8nApiWorkflow = Partial<IWorkflowBase> & Record<string, unknown>;
+
+export async function listWorkflows(baseUrl: string, apiKey: string): Promise<N8nApiWorkflow[] | unknown> {
   return n8nFetch(`${baseUrl}/api/v1/workflows`, apiKey);
 }
 
-export async function getWorkflow(workflowId: string, baseUrl: string, apiKey: string): Promise<unknown> {
+export async function getWorkflow(workflowId: string, baseUrl: string, apiKey: string): Promise<N8nApiWorkflow | unknown> {
   if (!workflowId) {
     throw new Error('workflowId is required.');
   }
