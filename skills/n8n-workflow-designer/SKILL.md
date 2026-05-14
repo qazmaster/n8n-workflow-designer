@@ -10,8 +10,9 @@ description: >
   - TypeScript code generation with @n8n-as-code/transformer decorators
   - Optional SDK-normalized JSON generation with @n8n/workflow-sdk
   - Compilation to n8n JSON format
-  - Deployment to n8n instances with credential management and update-existing support
-  - Workflow validation with idiomatic checks and official SDK validation
+  - Deployment to n8n instances with credential management, update-by-ID, dry-run, and update-existing support
+  - Workflow execution, import/export, credential metadata, and community package discovery
+  - Workflow validation with idiomatic checks, official SDK validation, and known-node registry checks
   
   Triggers on: n8n workflow, create automation, design workflow, deploy workflow,
   build n8n automation, workflow idea, n8n integration, Bitrix24 automation,
@@ -52,8 +53,11 @@ Use these tools in order for a safe workflow lifecycle:
 1. `design_workflow` — create decorator TypeScript by default, or set `outputFormat` to `sdk-json` / `both`.
 2. `compile_workflow` — compile decorator TypeScript to n8n JSON with `@n8n-as-code/transformer`.
 3. `validate_workflow` — validate TypeScript idioms and run official SDK validation for complete JSON.
-4. `deploy_workflow` — deploy JSON, updating an existing workflow by name unless `updateExisting: false`.
-5. `list_workflows` / `get_workflow` — inspect deployed workflows.
+4. `deploy_workflow` — deploy JSON. Prefer `workflowId` or `mode: "update-by-id"` for production-safe updates; use `dryRun: true` before mutating shared instances, then set `confirmMutation: true` for the actual create/update/activate call.
+5. `execute_workflow` — run a deployed workflow manually and optionally poll execution status. Requires `confirmMutation: true` because execution can trigger external side effects.
+6. `export_workflow` / `import_workflow` — move portable workflow JSON in and out of n8n.
+7. `list_credentials` / `list_community_packages` — resolve credential placeholders and verify optional node availability.
+8. `list_workflows` / `get_workflow` — inspect deployed workflows.
 
 `design_workflow.outputFormat`:
 

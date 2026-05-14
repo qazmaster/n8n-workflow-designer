@@ -38,7 +38,12 @@ The MCP server exposes workflow lifecycle tools:
 | `design_workflow` | Generate workflow TypeScript, SDK JSON, or both from natural language. |
 | `compile_workflow` | Compile decorator TypeScript into n8n workflow JSON with `@n8n-as-code/transformer`. |
 | `validate_workflow` | Check idiomatic rules and run official SDK validation for complete JSON. |
-| `deploy_workflow` | Create or update a workflow through the n8n REST API. |
+| `deploy_workflow` | Create or update a workflow through the n8n REST API, including explicit update-by-ID and dry-run modes. |
+| `execute_workflow` | Manually execute a workflow and optionally poll execution status. |
+| `export_workflow` | Fetch portable workflow JSON by ID. |
+| `import_workflow` | Import workflow JSON using the same safe deployment semantics. |
+| `list_credentials` | List credential metadata for resolving placeholders; secret payloads are redacted. |
+| `list_community_packages` | List installed community packages in the target n8n instance. |
 | `list_workflows` | List workflows in the configured n8n instance. |
 | `get_workflow` | Fetch one workflow by ID. |
 
@@ -59,6 +64,24 @@ The deployment script compiles local `.workflow.ts` files and deploys them to n8
 | `n8n-workflow` | Official n8n workflow and node types. |
 | `n8nac` | Workflow-as-code CLI tooling for development workflows. |
 | `@n8n/cli` | Official n8n CLI tooling for workflow/execution/credential operations. |
+
+The MCP server also mirrors useful n8n public API surfaces directly: workflow update-by-ID, execution, import/export, credential metadata, and community package discovery. These calls use `N8N_API_KEY` and `N8N_BASE_URL` and do not require embedding the full `n8n` runtime.
+
+## Safer deployment modes
+
+`deploy_workflow` and `import_workflow` support three strategies:
+
+| Mode | Behavior |
+|---|---|
+| `upsert-by-name` | Default. Find an existing workflow by name and `PATCH`, otherwise `POST` a new workflow. |
+| `update-by-id` | `PATCH /api/v1/workflows/{workflowId}`. This is preferred for production-safe updates. |
+| `create` | Always `POST /api/v1/workflows`; equivalent to `updateExisting: false`. |
+
+Set `dryRun: true` to inspect the sanitized payload and selected strategy without mutating the n8n instance or requiring `N8N_API_KEY`. Mutating deploy/import calls require `confirmMutation: true` so generated workflows are not created, updated, or activated accidentally.
+
+## Validation registry
+
+`validate_workflow` now runs a local known-node registry by default. It checks common credential requirements, community package requirements, and lightweight required parameters such as `httpRequest.url`. Full n8n node schema validation remains intentionally disabled until node description directories are wired into `@n8n/workflow-sdk`.
 
 The full `n8n` package is intentionally not embedded. This project talks to a running n8n instance through the API.
 
@@ -246,14 +269,21 @@ The integration tests cover:
 - decorator TypeScript generation and compilation
 - SDK-normalized JSON output
 - official SDK validation
-- update-existing deploy behavior and deploy settings filtering
+- update-existing, update-by-ID, dry-run, confirmation-gated deploy behavior, and deploy settings filtering
+- execution endpoint calls
+- export/import lifecycle helpers
+- credential metadata redaction and community package listing
+- API error-body redaction for sensitive keys
+- known-node registry validation
 
 ## Security notes
 
 - Keep `N8N_API_KEY` out of workflow JSON and source-controlled files.
 - Treat auto-deploy as privileged; generated workflows can call external services if allowed nodes are present.
 - Use human review or node allowlists before deploying workflows generated from untrusted prompts.
-- Use unique workflow names when `updateExisting` is enabled.
+- Prefer `workflowId` / `mode: "update-by-id"` for production updates. Name-based upserts are convenient but less safe.
+- Use `dryRun: true` first, then set `confirmMutation: true` only when the target instance and payload have been reviewed.
+- `execute_workflow` also requires `confirmMutation: true` because running a workflow can send messages, update CRMs, or call external APIs.
 - Run dependency audits before production releases.
 
 ## License
