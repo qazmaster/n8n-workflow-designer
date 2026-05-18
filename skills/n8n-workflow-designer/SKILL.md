@@ -109,6 +109,20 @@ Default workflow sequence:
 8. Deploy/list/execute through lifecycle tools only after safety checks and required confirmations.
 9. Report node-schema, template/example, compile, deploy, and test evidence.
 
+#### Deprecation and version guardrails
+
+- Treat deprecated nodes, hidden nodes, deprecated node versions, deprecated operations, deprecated parameter values, old credentials, and replacement-notice nodes as invalid for new workflow designs unless the user explicitly asks for a migration or compatibility patch.
+- Prefer the newest supported non-deprecated node `typeVersion` and parameter mode returned by live `n8n-mcp` lookup/validation for the target n8n instance.
+- For n8n AI Agent workflows on current n8n 2.x instances, use `@n8n/n8n-nodes-langchain.agent` with Tools Agent/current default behavior. Do **not** generate legacy modes: `conversationalAgent`, `reActAgent`, `sqlAgent`, `openAiFunctionsAgent`, or `planAndExecuteAgent`.
+- Use `@n8n/n8n-nodes-langchain.chatTrigger`, not the legacy Manual Chat Trigger. For Chat Hub agents, prefer `streaming`; for explicit response-node workflows, use `responseNodes` rather than the old “Respond to Webhook Node” pattern.
+- Distinguish standalone Gemini action nodes from chat model sub-nodes: use `@n8n/n8n-nodes-langchain.lmChatGoogleGemini` as the AI Agent chat model, and use `@n8n/n8n-nodes-langchain.googleGemini` only for standalone Gemini text/image/tool actions when live validation confirms it is appropriate.
+- Use `@n8n/n8n-nodes-langchain.lmChatOpenAi` for OpenAI chat models. Do not use the deprecated completion-style `OpenAI Model` / `LMOpenAi` pattern for new agent workflows.
+- Do not use deprecated workflow-level/node-level error handling such as `continueOnFail`; use current `onError` handling or a dedicated error workflow pattern instead.
+- Do not create hidden legacy nodes for new workflows: `openAiAssistant`, `memoryChatRetriever`, `memoryMotorhead`, `memoryZep`, `manualChatTrigger`, `cron`, `interval`, `workflowTrigger`, `function`, `functionItem`, `itemLists`, legacy file/binary conversion nodes, legacy `openAi`, or Zep vector stores.
+- Prefer current replacements by capability: AI Agent + chat model over OpenAI Assistant/legacy OpenAI, Chat Memory Manager or supported persistent memory over deprecated memory nodes, `scheduleTrigger` over Cron/Interval, `n8nTrigger` over Workflow Trigger, `code` over Function/Function Item, current split/aggregate/sort/filter nodes over Item Lists, `readWriteFile`/`extractFromFile`/`convertToFile` over legacy binary/file nodes, and Qdrant/Pinecone/Supabase/PGVector over Zep vector stores.
+- `memoryBufferWindow` is allowed for simple single-instance workflows, but for production, queue mode, or multi-main n8n, prefer persistent supported memory (`memoryPostgresChat`, `memoryRedisChat`, or `memoryMongoDbChat`). Avoid Airtable API Key credential mode; use access token or OAuth2.
+- If validation returns any deprecation warning, revise the design before calling it ready. If no replacement is available, label the workflow as a migration draft and explain the risk.
+
 | Category | Node Type | Use Case |
 |---|---|---|
 | **Triggers** | `n8n-nodes-base.webhook` | HTTP endpoints |
@@ -122,7 +136,8 @@ Default workflow sequence:
 | **AI** | `@n8n/n8n-nodes-langchain.agent` | AI Agent |
 | | `@n8n/n8n-nodes-langchain.lmChatOpenAi` | OpenAI |
 | | `@n8n/n8n-nodes-langchain.lmChatOpenRouter` | OpenRouter |
-| | `@n8n/n8n-nodes-langchain.googleGemini` | Gemini |
+| | `@n8n/n8n-nodes-langchain.lmChatGoogleGemini` | Gemini chat model for AI Agent |
+| | `@n8n/n8n-nodes-langchain.googleGemini` | Standalone Gemini text/image/tool actions, not the AI Agent chat model |
 | **Logic** | `n8n-nodes-base.if` | Conditional branching |
 | | `n8n-nodes-base.switch` | Multi-branch routing |
 | | `n8n-nodes-base.merge` | Combine streams |
@@ -130,7 +145,7 @@ Default workflow sequence:
 | | `n8n-nodes-base.code` | Complex JavaScript only: loops, grouping, custom algorithms |
 | **Data** | `n8n-nodes-base.httpRequest` | Generic HTTP |
 | | `n8n-nodes-base.splitInBatches` | Batch processing |
-| | `n8n-nodes-base.itemLists` | List operations |
+| | Current list/data primitives (`splitOut`, `aggregate`, `sort`, `limit`, `summarize`, `removeDuplicates`, `filter`) | List operations; do not use legacy Item Lists |
 | **Reliability** | `n8n-nodes-base.errorTrigger` | Error handling |
 | | `n8n-nodes-base.wait` | Delay/polling |
 | **Community** | `n8n-nodes-docxtemplater.docxtemplater` | DOCX generation from templates |
@@ -181,11 +196,11 @@ AI workflows should use a main `@n8n/n8n-nodes-langchain.agent` node and sub-nod
 Agent = { text: '={{ $json.summary }}' };
 
 @node({
-    name: 'OpenAI Model',
+    name: 'OpenAI Chat Model',
     type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
     credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI account' } }
 })
-OpenAIModel = {
+OpenAIChatModel = {
     model: 'gpt-4o-mini'
 };
 
@@ -196,7 +211,7 @@ Memory = { sessionKey: '={{ $execution.id }}', contextWindowLength: 10 };
 defineRouting() {
     this.ChatTrigger.out(0).to(this.Agent.in(0));
     this.Agent.uses({
-        ai_languageModel: this.OpenAIModel.output,
+        ai_languageModel: this.OpenAIChatModel.output,
         ai_memory: this.Memory.output
     });
 }
@@ -386,11 +401,11 @@ export class ScheduledAiWorkflow {
     };
 
     @node({
-        name: 'OpenAI Model',
+        name: 'OpenAI Chat Model',
         type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
         credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI account' } }
     })
-    OpenAIModel = {
+    OpenAIChatModel = {
         model: 'gpt-4o-mini'
     };
 
@@ -412,7 +427,7 @@ export class ScheduledAiWorkflow {
         this.Schedule.out(0).to(this.FetchData.in(0));
         this.FetchData.out(0).to(this.AiAnalysis.in(0));
         this.AiAnalysis.out(0).to(this.SendReport.in(0));
-        this.AiAnalysis.uses({ ai_languageModel: this.OpenAIModel.output });
+        this.AiAnalysis.uses({ ai_languageModel: this.OpenAIChatModel.output });
     }
 }
 ```
@@ -445,7 +460,7 @@ export class AiAgentWorkflow {
     defineRouting() {
         this.Chat.out(0).to(this.Agent.in(0));
         this.Agent.uses({
-            ai_languageModel: this.OpenAI.output,
+            ai_languageModel: this.OpenAIChatModel.output,
             ai_memory: this.Memory.output,
             ai_tool: [this.WeatherTool.output]
         });
