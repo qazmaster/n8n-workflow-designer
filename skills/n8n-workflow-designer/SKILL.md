@@ -13,6 +13,7 @@ description: >
   - Deployment to n8n instances with credential management, update-by-ID, dry-run, and update-existing support
   - Workflow execution, import/export, credential metadata, and community package discovery
   - Workflow validation with idiomatic checks, official SDK validation, and known-node registry checks
+  - n8n node discovery, schemas, operations, examples, templates, and validation through installed n8n-mcp
   
   Triggers on: n8n workflow, create automation, design workflow, deploy workflow,
   build n8n automation, workflow idea, n8n integration, Bitrix24 automation,
@@ -48,7 +49,9 @@ export N8N_BASE_URL="https://your-n8n-instance.com"
 
 ## MCP Tool Usage
 
-Use these tools in order for a safe workflow lifecycle:
+Use a two-layer MCP architecture. Keep workflow lifecycle operations separate from n8n node intelligence.
+
+**Layer 1 — Workflow lifecycle (`n8n-workflow-mcp` / this repository):** controls reviewable workflow artifacts and delivery. Use these tools in order for a safe workflow lifecycle:
 
 1. `design_workflow` — create decorator TypeScript by default, or set `outputFormat` to `sdk-json` / `both`.
 2. `compile_workflow` — compile decorator TypeScript to n8n JSON with `@n8n-as-code/transformer`.
@@ -58,6 +61,17 @@ Use these tools in order for a safe workflow lifecycle:
 6. `export_workflow` / `import_workflow` — move portable workflow JSON in and out of n8n.
 7. `list_credentials` / `list_community_packages` — resolve credential placeholders and verify optional node availability.
 8. `list_workflows` / `get_workflow` — inspect deployed workflows.
+
+**Layer 2 — n8n intelligence (`czlonkowski/n8n-mcp`, already installed in OpenCode settings):** controls authoritative node discovery, schemas, operations, examples/templates, docs, and node-level validation. Use it before and during lifecycle operations:
+
+1. `tools_documentation` — discover available n8n-mcp tools when lookup mode is unclear.
+2. `search_templates` / `get_template` — find reusable workflow patterns before designing common automations.
+3. `search_nodes` — find candidate native/community nodes by capability.
+4. `get_node` — inspect node schema, parameters, operations, docs, examples, and versions before writing configuration.
+5. `validate_node` — validate configured nodes, especially credentials, operations, fixed collections, AI links, and expressions.
+6. `validate_workflow` — cross-check workflow configuration against live n8n metadata before claiming readiness.
+
+Do not treat these layers as substitutes. `czlonkowski/n8n-mcp` improves correctness of node usage; it does not replace reviewable local workflow artifacts, lifecycle compilation, deployment safety, or live testing. Remote management tools exposed by `czlonkowski/n8n-mcp` are not part of the default design loop unless the user explicitly asks for direct remote workflow management.
 
 `design_workflow.outputFormat`:
 
@@ -80,6 +94,20 @@ Before generating code, clarify:
 5. **AI integration**: OpenAI, Gemini, local LLM?
 
 ### Step 2: Select Node Types
+
+Before relying on the static node table below, use `czlonkowski/n8n-mcp` as the authoritative reference for node discovery and configuration. The table is only a quick orientation aid; live MCP lookup wins whenever it disagrees with this file.
+
+Default workflow sequence:
+
+1. Understand the automation request and constraints.
+2. Search examples/templates with `czlonkowski/n8n-mcp` and adapt useful best-practice patterns.
+3. Search and inspect node schemas with `czlonkowski/n8n-mcp`.
+4. Design the workflow structure with this skill and the lifecycle MCP tools.
+5. Generate reviewable workflow output through `design_workflow`.
+6. Validate selected nodes and workflow structure with `czlonkowski/n8n-mcp`.
+7. Compile/validate through lifecycle tools.
+8. Deploy/list/execute through lifecycle tools only after safety checks and required confirmations.
+9. Report node-schema, template/example, compile, deploy, and test evidence.
 
 | Category | Node Type | Use Case |
 |---|---|---|
@@ -453,15 +481,49 @@ export class AiAgentWorkflow {
 | `credentials not found` | Missing credential in n8n | Create credential in n8n UI first |
 | `webhook path already exists` | Duplicate webhook path | Use unique paths per workflow |
 
-## Integration with MCP Server
+## Two-Layer MCP Architecture
 
-This skill works with the companion MCP server (`n8n-workflow-mcp`) which exposes:
+This skill works with two complementary MCP layers:
 
-- `design_workflow` — Generate workflow design from description
-- `compile_workflow` — Compile TypeScript to n8n JSON
-- `deploy_workflow` — Deploy to n8n instance
-- `list_workflows` — List deployed workflows
-- `validate_workflow` — Check workflow structure and idiomatic n8n patterns
+### Layer 1: Workflow Lifecycle
+
+The companion MCP server in this repository (`n8n-workflow-mcp`) owns the workflow artifact lifecycle:
+
+- `design_workflow` — Generate workflow design from description.
+- `compile_workflow` — Compile TypeScript to n8n JSON.
+- `validate_workflow` — Check workflow structure, idiomatic rules, SDK validation, and known-node registry checks.
+- `deploy_workflow` — Deploy to n8n with dry-run and explicit mutation confirmation safeguards.
+- `execute_workflow` — Execute deployed workflows with explicit confirmation.
+- `export_workflow` / `import_workflow` — Move portable workflow JSON safely.
+- `list_credentials` / `list_community_packages` — Inspect credential metadata and optional node availability.
+- `list_workflows` / `get_workflow` — Inspect deployed workflows.
+
+### Layer 2: n8n Intelligence
+
+The already-installed `czlonkowski/n8n-mcp` server owns live n8n knowledge and metadata validation:
+
+- `tools_documentation` — Discover available n8n-mcp tools and recommended lookup flow.
+- `search_nodes` — Find candidate n8n nodes by capability or integration name.
+- `get_node` — Read authoritative node docs, schema, operations, properties, examples, and versions.
+- `validate_node` — Validate a configured node against available metadata.
+- `validate_workflow` — Validate workflow configuration against live n8n metadata.
+- `search_templates` — Find reusable workflow templates before designing common patterns.
+- `get_template` — Inspect a selected template and adapt its proven structure.
+
+### Routing Rules
+
+| Task | Use |
+|------|-----|
+| Choose the correct n8n node | `czlonkowski/n8n-mcp` intelligence layer |
+| Get node schema, parameters, operations, docs | `czlonkowski/n8n-mcp` intelligence layer |
+| Find examples/templates and best-practice patterns | `czlonkowski/n8n-mcp` intelligence layer |
+| Validate a configured node | `czlonkowski/n8n-mcp` intelligence layer |
+| Design workflow structure | Skill logic plus `n8n-workflow-mcp` lifecycle layer |
+| Compile TypeScript to n8n JSON | `n8n-workflow-mcp` lifecycle layer |
+| List workflows or inspect deployed workflow state | `n8n-workflow-mcp` lifecycle layer |
+| Deploy/import/export/execute workflow | `n8n-workflow-mcp` lifecycle layer with explicit safety confirmations |
+
+Operational rule: reference and validation tools from `czlonkowski/n8n-mcp` are safe to use during design. Direct remote management through that server is not part of the default workflow because this repository's lifecycle server owns artifact safety, reviewability, dry-run behavior, and mutation confirmation.
 
 ## Examples
 
