@@ -1,6 +1,6 @@
 # n8n Workflow Designer
 
-OpenCode skill + MCP server for designing, validating, compiling, and deploying idiomatic n8n workflows from natural language descriptions.
+OpenCode skill + MCP server for designing, validating, compiling, and deploying idiomatic n8n workflows from natural language descriptions, with optional live n8n node intelligence from `czlonkowski/n8n-mcp`.
 
 The default authoring format is readable TypeScript decorators. The MCP server can also return SDK-normalized workflow JSON using the official `@n8n/workflow-sdk` for callers that want JSON directly.
 
@@ -8,9 +8,10 @@ The default authoring format is readable TypeScript decorators. The MCP server c
 
 ```text
 Natural language idea
+→ examples/templates and node metadata lookup
 → idiomatic workflow design
 → decorator TypeScript or SDK-normalized JSON
-→ validation
+→ node and workflow validation
 → compiled n8n workflow JSON
 → deployed workflow in n8n
 ```
@@ -23,6 +24,11 @@ Use it when you want an AI agent to create or maintain n8n automations while sti
 
 The bundled `n8n-workflow-designer` skill teaches the agent how to design idiomatic n8n workflows. It covers native node selection, credential placeholders, AI Agent sub-node wiring, error workflows, community node requirements, and validation expectations.
 
+The skill now uses a two-layer MCP architecture:
+
+- **Workflow lifecycle layer** — this repository's MCP server owns reviewable workflow artifacts, design, compile, validation, deploy, execution, import/export, and workflow inspection.
+- **n8n intelligence layer** — an already-installed `czlonkowski/n8n-mcp` server owns live node discovery, schemas, operations, docs, examples/templates, and node-level validation.
+
 Install it into your OpenCode/Claude skills directory:
 
 ```bash
@@ -31,7 +37,7 @@ cp -r skills/n8n-workflow-designer ~/.claude/skills/
 
 ### MCP server
 
-The MCP server exposes workflow lifecycle tools:
+This repository's MCP server exposes workflow lifecycle tools:
 
 | Tool | Purpose |
 |---|---|
@@ -46,6 +52,22 @@ The MCP server exposes workflow lifecycle tools:
 | `list_community_packages` | List installed community packages in the target n8n instance. |
 | `list_workflows` | List workflows in the configured n8n instance. |
 | `get_workflow` | Fetch one workflow by ID. |
+
+### n8n intelligence MCP
+
+When `czlonkowski/n8n-mcp` is installed in the MCP client settings, the skill uses it as the live n8n reference layer before and during lifecycle operations:
+
+| Tool | Purpose |
+|---|---|
+| `tools_documentation` | Discover available n8n-mcp tools and recommended lookup modes. |
+| `search_templates` | Find reusable workflow templates and common automation patterns. |
+| `get_template` | Inspect a selected template before adapting its structure. |
+| `search_nodes` | Find native or community nodes by capability or integration name. |
+| `get_node` | Inspect node schemas, parameters, operations, docs, examples, and versions. |
+| `validate_node` | Validate configured nodes against live metadata. |
+| `validate_workflow` | Cross-check workflow configuration against n8n metadata. |
+
+The intelligence MCP is not a replacement for this repository's lifecycle MCP server. It improves node correctness and pattern discovery; artifact generation, compilation, deployment safeguards, and execution remain lifecycle responsibilities.
 
 ### Example workflows
 
@@ -67,6 +89,8 @@ The deployment script compiles local `.workflow.ts` files and deploys them to n8
 
 The MCP server also mirrors useful n8n public API surfaces directly: workflow update-by-ID, execution, import/export, credential metadata, and community package discovery. These calls use `N8N_API_KEY` and `N8N_BASE_URL` and do not require embedding the full `n8n` runtime.
 
+`czlonkowski/n8n-mcp` complements those lifecycle calls with a searchable n8n knowledge base. Use it to avoid invented node names, invalid operations, stale parameters, and missed template patterns.
+
 ## Safer deployment modes
 
 `deploy_workflow` and `import_workflow` support three strategies:
@@ -82,6 +106,8 @@ Set `dryRun: true` to inspect the sanitized payload and selected strategy withou
 ## Validation registry
 
 `validate_workflow` now runs a local known-node registry by default. It checks common credential requirements, community package requirements, and lightweight required parameters such as `httpRequest.url`. Full n8n node schema validation remains intentionally disabled until node description directories are wired into `@n8n/workflow-sdk`.
+
+For full live node schema, operation, and property checks, use `czlonkowski/n8n-mcp` alongside the local registry. The intended validation path is: inspect templates and nodes with n8n-mcp, validate configured nodes with n8n-mcp, then run this repository's lifecycle `validate_workflow` before compile/deploy.
 
 The full `n8n` package is intentionally not embedded. This project talks to a running n8n instance through the API.
 
@@ -112,9 +138,19 @@ The server runs over stdio, so most users start it through their MCP client conf
 
 ## Typical workflow
 
+### 0. Discover templates and nodes
+
+Before designing a non-trivial workflow, use the installed `czlonkowski/n8n-mcp` intelligence layer:
+
+```text
+search_templates → get_template → search_nodes → get_node → validate_node
+```
+
+Use template results for best-practice workflow structure and `get_node` results for exact node type, version, operation, parameter, credential, and expression guidance. If the intelligence layer is unavailable, proceed with reduced confidence and rely on this repository's local validation registry.
+
 ### 1. Design a workflow
 
-Ask the MCP server to design from natural language:
+Ask this repository's lifecycle MCP server to design from natural language:
 
 ```json
 {
@@ -183,7 +219,7 @@ Run `validate_workflow` on either TypeScript or compiled JSON:
 }
 ```
 
-Validation combines project-specific idiomatic checks with official SDK validation when complete workflow JSON is provided.
+Validation combines project-specific idiomatic checks with official SDK validation when complete workflow JSON is provided. For exact node schemas and operation-level metadata, validate configured nodes with `czlonkowski/n8n-mcp` before this lifecycle validation step.
 
 Common feedback includes:
 
@@ -224,13 +260,15 @@ For production automation, prefer unique workflow names or explicit workflow IDs
 
 ## Idiomatic design principles
 
-1. **Native nodes over HTTP Request** — use nodes such as Bitrix24, Telegram, Microsoft Teams, Outlook, Google Sheets, and Google Drive before raw HTTP.
-2. **Credential references** — configure credentials in n8n and reference placeholder IDs/names; never hardcode secrets.
-3. **Set nodes for simple transforms** — use Code only for loops, grouping, custom algorithms, binary work, or complex JavaScript.
-4. **AI Agent pattern** — use `@n8n/n8n-nodes-langchain.agent` plus model, memory, tool, and vector-store sub-nodes.
-5. **Error workflows** — create a separate Error Trigger workflow and reference it through `settings.errorWorkflow`.
-6. **Sub-workflows** — reuse shared logic with `executeWorkflow`.
-7. **Community nodes deliberately** — document required community nodes such as docxtemplater or Qdrant before deployment.
+1. **Templates before invention** — search examples/templates with `czlonkowski/n8n-mcp` before designing common automation patterns.
+2. **Native nodes over HTTP Request** — use nodes such as Bitrix24, Telegram, Microsoft Teams, Outlook, Google Sheets, and Google Drive before raw HTTP.
+3. **Schema-backed configuration** — inspect selected nodes with `get_node` and validate important configurations with `validate_node`.
+4. **Credential references** — configure credentials in n8n and reference placeholder IDs/names; never hardcode secrets.
+5. **Set nodes for simple transforms** — use Code only for loops, grouping, custom algorithms, binary work, or complex JavaScript.
+6. **AI Agent pattern** — use `@n8n/n8n-nodes-langchain.agent` plus model, memory, tool, and vector-store sub-nodes.
+7. **Error workflows** — create a separate Error Trigger workflow and reference it through `settings.errorWorkflow`.
+8. **Sub-workflows** — reuse shared logic with `executeWorkflow`.
+9. **Community nodes deliberately** — document required community nodes such as docxtemplater or Qdrant before deployment.
 
 ## Credential handling
 
@@ -275,6 +313,7 @@ The integration tests cover:
 - credential metadata redaction and community package listing
 - API error-body redaction for sensitive keys
 - known-node registry validation
+- skill documentation for the two-layer lifecycle/intelligence architecture
 
 ## Security notes
 
