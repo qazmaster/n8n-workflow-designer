@@ -114,6 +114,23 @@ Never use a single complex `Code` node (e.g., 30+ lines of JavaScript/Python) to
 - Placeholders and URLs should be configurable.
 - Use rate limits/wait states where appropriate for high-volume API requests.
 
+### 7. Educational Sticky Notes Structure (CRITICAL for Course Workflows)
+When designing workflows, always include exactly 4 sequential sticky notes to document the workflow structure. Headers inside the sticky notes must use заголовки 3-го уровня (`###`) instead of `##` for a smaller, cleaner font size in the n8n UI.
+
+The grouping must be exactly sequential as follows:
+- **Sticky Note 1 (ID: `sticky-1`, Name: `Overview, Input Data & Concept`, Color: 1 - Yellow)**:
+  - `### 1. Overview` — what the workflow demonstrates.
+  - `### 2. Input Data` — what test/input data is used.
+  - `### 3. Concept` — the theory/concepts taught in this workflow.
+- **Sticky Note 2 (ID: `sticky-2`, Name: `Node Notes`, Color: 4 - Green)**:
+  - `### 4. Node Notes` — detailed step-by-step/node-by-node explanation.
+- **Sticky Note 3 (ID: `sticky-3`, Name: `Common Mistakes & Student Task`, Color: 2 - Yellow/Brown)**:
+  - `### 5. Common Mistakes` — typical mistakes/pitfalls for students.
+  - `### 6. Student Task` — mini-assignment or task for self-study.
+- **Sticky Note 4 (ID: `sticky-4`, Name: `Expected Output & Final Check`, Color: 3 - Red)**:
+  - `### 7. Expected Output` — what data or result should be produced on success.
+  - `### 8. Final Check` — description of the validation or final check criteria.
+
 ## Resources
 
 - [n8n-as-code Transformer](https://github.com/EtienneLescot/n8n-as-code)
