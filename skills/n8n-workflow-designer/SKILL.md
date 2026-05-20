@@ -90,6 +90,10 @@ Use these guidelines before generating TypeScript or JSON:
 ### 1. Prefer Native Nodes Over `httpRequest`
 Use native nodes when they are available and supported in the instance. External APIs without a native node may use `httpRequest`.
 
+### 1.1 Avoid Deprecated or Removed Native Nodes (CRITICAL)
+- **Do NOT use `n8n-nodes-base.email`**. This node is legacy, deprecated, and will render as a `?` placeholder in newer n8n instances. Always use `n8n-nodes-base.emailSend` (version 2.1) for sending SMTP emails, or `n8n-nodes-base.emailReadImap` (version 2.1) for receiving emails.
+- **Do NOT use `n8n-nodes-base.start`**. This node is deprecated and replaced by `n8n-nodes-base.manualTrigger` (version 1). Always use `manualTrigger` instead of `start`.
+
 ### 3. Use Proper Credential References
 Authenticated nodes must include a `credentials` object with placeholder IDs/names that match n8n credential types. Never hardcode API keys, tokens, or credentials in URLs or headers.
 

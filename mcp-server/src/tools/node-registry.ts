@@ -69,6 +69,12 @@ export const CREDENTIAL_PLACEHOLDERS: Record<string, Record<string, CredentialPl
   'n8n-nodes-htmlcsstopdf.htmlcsstopdf': {
     htmlcsstopdfApi: { id: 'HTMLCSSTOPDF_CREDENTIAL_ID', name: 'PDFMunk API key' },
   },
+  'n8n-nodes-base.emailSend': {
+    emailSmtpApi: { id: 'EMAIL_SMTP_CREDENTIAL_ID', name: 'SMTP account' },
+  },
+  'n8n-nodes-base.emailReadImap': {
+    emailImapApi: { id: 'EMAIL_IMAP_CREDENTIAL_ID', name: 'IMAP account' },
+  },
 };
 
 export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
@@ -202,6 +208,16 @@ export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
     credentialTypes: ['htmlcsstopdfApi'],
     communityPackage: 'n8n-nodes-htmlcsstopdf',
     installHint: 'Install n8n-nodes-htmlcsstopdf community node before import/deploy.',
+  },
+  'n8n-nodes-base.emailSend': {
+    type: 'n8n-nodes-base.emailSend',
+    label: 'Send Email',
+    credentialTypes: ['emailSmtpApi'],
+  },
+  'n8n-nodes-base.emailReadImap': {
+    type: 'n8n-nodes-base.emailReadImap',
+    label: 'Email Trigger (IMAP)',
+    credentialTypes: ['emailImapApi'],
   },
 };
 

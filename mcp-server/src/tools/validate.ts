@@ -143,6 +143,7 @@ function validateTypeScript(code: string, issues: ValidationIssue[]): void {
   validateCommunityNodes(code, issues);
   validateCredentialReferencesInText(code, issues);
   validateDeprecatedCommunityNodes(code, issues);
+  validateDeprecatedNativeNodes(code, issues);
 }
 
 function validateWorkflowJson(
@@ -232,6 +233,26 @@ function validateWorkflowJson(
           });
         }
       }
+    }
+
+    if (node.type === 'n8n-nodes-base.email') {
+      issues.push({
+        severity: 'warning',
+        code: 'deprecated-native-node',
+        node: node.name,
+        message: 'n8n-nodes-base.email is deprecated and will render as a "?" placeholder in newer n8n instances.',
+        recommendation: 'Use n8n-nodes-base.emailSend (for SMTP) or n8n-nodes-base.emailReadImap (for IMAP triggers) instead.',
+      });
+    }
+
+    if (node.type === 'n8n-nodes-base.start') {
+      issues.push({
+        severity: 'warning',
+        code: 'deprecated-native-node',
+        node: node.name,
+        message: 'n8n-nodes-base.start is deprecated and removed in newer n8n instances.',
+        recommendation: 'Use n8n-nodes-base.manualTrigger instead.',
+      });
     }
 
     if (schemaValidation === 'known-node-registry') {
@@ -569,6 +590,36 @@ function validateDeprecatedCommunityNodes(code: string, issues: ValidationIssue[
         code: 'deprecated-community-node',
         message: `Workflow references a deprecated or high-risk community node/package: ${rule.message}`,
         recommendation: rule.recommendation,
+      });
+    }
+  }
+}
+
+function validateDeprecatedNativeNodes(code: string, issues: ValidationIssue[]): void {
+  // Check for legacy email node: type: 'n8n-nodes-base.email'
+  const emailMatch = code.match(/@node\([\s\S]*?n8n-nodes-base\.email['"][\s\S]*?\)/g);
+  if (emailMatch) {
+    for (const block of emailMatch) {
+      issues.push({
+        severity: 'warning',
+        code: 'deprecated-native-node',
+        node: extractNodeName(block),
+        message: 'n8n-nodes-base.email is deprecated and will render as a "?" placeholder in newer n8n instances.',
+        recommendation: 'Use n8n-nodes-base.emailSend (for SMTP) or n8n-nodes-base.emailReadImap (for IMAP triggers) instead.',
+      });
+    }
+  }
+
+  // Check for legacy start node: type: 'n8n-nodes-base.start'
+  const startMatch = code.match(/@node\([\s\S]*?n8n-nodes-base\.start['"][\s\S]*?\)/g);
+  if (startMatch) {
+    for (const block of startMatch) {
+      issues.push({
+        severity: 'warning',
+        code: 'deprecated-native-node',
+        node: extractNodeName(block),
+        message: 'n8n-nodes-base.start is deprecated and removed in newer n8n instances.',
+        recommendation: 'Use n8n-nodes-base.manualTrigger instead.',
       });
     }
   }
