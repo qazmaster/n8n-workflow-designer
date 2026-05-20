@@ -13,7 +13,6 @@ description: >
   - Deployment to n8n instances with credential management, update-by-ID, dry-run, and update-existing support
   - Workflow execution, import/export, credential metadata, and community package discovery
   - Workflow validation with idiomatic checks, official SDK validation, and known-node registry checks
-  - n8n node discovery, schemas, operations, examples, templates, and validation through installed n8n-mcp
   
   Triggers on: n8n workflow, create automation, design workflow, deploy workflow,
   build n8n automation, workflow idea, n8n integration, Bitrix24 automation,
@@ -49,29 +48,16 @@ export N8N_BASE_URL="https://your-n8n-instance.com"
 
 ## MCP Tool Usage
 
-Use a two-layer MCP architecture. Keep workflow lifecycle operations separate from n8n node intelligence.
-
-**Layer 1 — Workflow lifecycle (`n8n-workflow-mcp` / this repository):** controls reviewable workflow artifacts and delivery. Use these tools in order for a safe workflow lifecycle:
+Use these tools in order for a safe workflow lifecycle:
 
 1. `design_workflow` — create decorator TypeScript by default, or set `outputFormat` to `sdk-json` / `both`.
 2. `compile_workflow` — compile decorator TypeScript to n8n JSON with `@n8n-as-code/transformer`.
-3. `validate_workflow` — validate TypeScript idioms and run official SDK validation for complete JSON.
+3. `validate_workflow` — validate TypeScript idioms and run official SDK validation for complete JSON. Additionally, execute the self-contained universal validator (using the Python validator code block provided at the end of this document) to detect version-specific configuration regressions.
 4. `deploy_workflow` — deploy JSON. Prefer `workflowId` or `mode: "update-by-id"` for production-safe updates; use `dryRun: true` before mutating shared instances, then set `confirmMutation: true` for the actual create/update/activate call.
 5. `execute_workflow` — run a deployed workflow manually and optionally poll execution status. Requires `confirmMutation: true` because execution can trigger external side effects.
 6. `export_workflow` / `import_workflow` — move portable workflow JSON in and out of n8n.
 7. `list_credentials` / `list_community_packages` — resolve credential placeholders and verify optional node availability.
 8. `list_workflows` / `get_workflow` — inspect deployed workflows.
-
-**Layer 2 — n8n intelligence (`czlonkowski/n8n-mcp`, already installed in OpenCode settings):** controls authoritative node discovery, schemas, operations, examples/templates, docs, and node-level validation. Use it before and during lifecycle operations:
-
-1. `tools_documentation` — discover available n8n-mcp tools when lookup mode is unclear.
-2. `search_templates` / `get_template` — find reusable workflow patterns before designing common automations.
-3. `search_nodes` — find candidate native/community nodes by capability.
-4. `get_node` — inspect node schema, parameters, operations, docs, examples, and versions before writing configuration.
-5. `validate_node` — validate configured nodes, especially credentials, operations, fixed collections, AI links, and expressions.
-6. `validate_workflow` — cross-check workflow configuration against live n8n metadata before claiming readiness.
-
-Do not treat these layers as substitutes. `czlonkowski/n8n-mcp` improves correctness of node usage; it does not replace reviewable local workflow artifacts, lifecycle compilation, deployment safety, or live testing. Remote management tools exposed by `czlonkowski/n8n-mcp` are not part of the default design loop unless the user explicitly asks for direct remote workflow management.
 
 `design_workflow.outputFormat`:
 
@@ -95,61 +81,7 @@ Before generating code, clarify:
 
 ### Step 2: Select Node Types
 
-Before relying on the static node table below, use `czlonkowski/n8n-mcp` as the authoritative reference for node discovery and configuration. The table is only a quick orientation aid; live MCP lookup wins whenever it disagrees with this file.
-
-Default workflow sequence:
-
-1. Understand the automation request and constraints.
-2. Search examples/templates with `czlonkowski/n8n-mcp` and adapt useful best-practice patterns.
-3. Search and inspect node schemas with `czlonkowski/n8n-mcp`.
-4. Design the workflow structure with this skill and the lifecycle MCP tools.
-5. Generate reviewable workflow output through `design_workflow`.
-6. Validate selected nodes and workflow structure with `czlonkowski/n8n-mcp`.
-7. Compile/validate through lifecycle tools.
-8. Deploy/list/execute through lifecycle tools only after safety checks and required confirmations.
-9. Report node-schema, template/example, compile, deploy, and test evidence.
-
-#### Deprecation and version guardrails
-
-- Treat deprecated nodes, hidden nodes, deprecated node versions, deprecated operations, deprecated parameter values, old credentials, and replacement-notice nodes as invalid for new workflow designs unless the user explicitly asks for a migration or compatibility patch.
-- Prefer the newest supported non-deprecated node `typeVersion` and parameter mode returned by live `n8n-mcp` lookup/validation for the target n8n instance.
-- For n8n AI Agent workflows on current n8n 2.x instances, use `@n8n/n8n-nodes-langchain.agent` with Tools Agent/current default behavior. Do **not** generate legacy modes: `conversationalAgent`, `reActAgent`, `sqlAgent`, `openAiFunctionsAgent`, or `planAndExecuteAgent`.
-- Use `@n8n/n8n-nodes-langchain.chatTrigger`, not the legacy Manual Chat Trigger. For Chat Hub agents, prefer `streaming`; for explicit response-node workflows, use `responseNodes` rather than the old “Respond to Webhook Node” pattern.
-- Distinguish standalone Gemini action nodes from chat model sub-nodes: use `@n8n/n8n-nodes-langchain.lmChatGoogleGemini` as the AI Agent chat model, and use `@n8n/n8n-nodes-langchain.googleGemini` only for standalone Gemini text/image/tool actions when live validation confirms it is appropriate.
-- Use `@n8n/n8n-nodes-langchain.lmChatOpenAi` for OpenAI chat models. Do not use the deprecated completion-style `OpenAI Model` / `LMOpenAi` pattern for new agent workflows.
-- Do not use deprecated workflow-level/node-level error handling such as `continueOnFail`; use current `onError` handling or a dedicated error workflow pattern instead.
-- Do not create hidden legacy nodes for new workflows: `openAiAssistant`, `memoryChatRetriever`, `memoryMotorhead`, `memoryZep`, `manualChatTrigger`, `cron`, `interval`, `workflowTrigger`, `function`, `functionItem`, `itemLists`, legacy file/binary conversion nodes, legacy `openAi`, or Zep vector stores.
-- Prefer current replacements by capability: AI Agent + chat model over OpenAI Assistant/legacy OpenAI, Chat Memory Manager or supported persistent memory over deprecated memory nodes, `scheduleTrigger` over Cron/Interval, `n8nTrigger` over Workflow Trigger, `code` over Function/Function Item, current split/aggregate/sort/filter nodes over Item Lists, `readWriteFile`/`extractFromFile`/`convertToFile` over legacy binary/file nodes, and Qdrant/Pinecone/Supabase/PGVector over Zep vector stores.
-- `memoryBufferWindow` is allowed for simple single-instance workflows, but for production, queue mode, or multi-main n8n, prefer persistent supported memory (`memoryPostgresChat`, `memoryRedisChat`, or `memoryMongoDbChat`). Avoid Airtable API Key credential mode; use access token or OAuth2.
-- If validation returns any deprecation warning, revise the design before calling it ready. If no replacement is available, label the workflow as a migration draft and explain the risk.
-
-| Category | Node Type | Use Case |
-|---|---|---|
-| **Triggers** | `n8n-nodes-base.webhook` | HTTP endpoints |
-| | `n8n-nodes-base.scheduleTrigger` | Cron jobs |
-| | `n8n-nodes-base.manualTrigger` | One-click execution |
-| | `n8n-nodes-base.telegramTrigger` | Telegram bot |
-| | `@n8n/n8n-nodes-langchain.chatTrigger` | AI chat |
-| **Bitrix24** | `n8n-nodes-base.bitrix24` | CRM leads, deals, contacts; prefer native credentials over webhook URLs |
-| **Microsoft** | `n8n-nodes-base.microsoftOutlook` | Email |
-| | `n8n-nodes-base.microsoftTeams` | Teams messages |
-| **AI** | `@n8n/n8n-nodes-langchain.agent` | AI Agent |
-| | `@n8n/n8n-nodes-langchain.lmChatOpenAi` | OpenAI |
-| | `@n8n/n8n-nodes-langchain.lmChatOpenRouter` | OpenRouter |
-| | `@n8n/n8n-nodes-langchain.lmChatGoogleGemini` | Gemini chat model for AI Agent |
-| | `@n8n/n8n-nodes-langchain.googleGemini` | Standalone Gemini text/image/tool actions, not the AI Agent chat model |
-| **Logic** | `n8n-nodes-base.if` | Conditional branching |
-| | `n8n-nodes-base.switch` | Multi-branch routing |
-| | `n8n-nodes-base.merge` | Combine streams |
-| | `n8n-nodes-base.set` | Set/edit fields and simple transforms |
-| | `n8n-nodes-base.code` | Complex JavaScript only: loops, grouping, custom algorithms |
-| **Data** | `n8n-nodes-base.httpRequest` | Generic HTTP |
-| | `n8n-nodes-base.splitInBatches` | Batch processing |
-| | Current list/data primitives (`splitOut`, `aggregate`, `sort`, `limit`, `summarize`, `removeDuplicates`, `filter`) | List operations; do not use legacy Item Lists |
-| **Reliability** | `n8n-nodes-base.errorTrigger` | Error handling |
-| | `n8n-nodes-base.wait` | Delay/polling |
-| **Community** | `n8n-nodes-docxtemplater.docxtemplater` | DOCX generation from templates |
-| | `@n8n/n8n-nodes-langchain.vectorStoreQdrant` | Qdrant vector retrieval for RAG workflows |
+Select appropriate n8n nodes for the user's requirements. Ensure native nodes or community nodes are preferred over generic `httpRequest` when available and configured in the instance.
 
 ## General n8n Design Guide
 
@@ -158,512 +90,21 @@ Use these guidelines before generating TypeScript or JSON:
 ### 1. Prefer Native Nodes Over `httpRequest`
 Use native nodes when they are available and supported in the instance. External APIs without a native node may use `httpRequest`.
 
-### 2. Use Proper Credential References
+### 3. Use Proper Credential References
 Authenticated nodes must include a `credentials` object with placeholder IDs/names that match n8n credential types. Never hardcode API keys, tokens, or credentials in URLs or headers.
 
-### 3. Prefer Set Nodes for Simple Transforms
-Use `n8n-nodes-base.set` for field mapping, renaming, static defaults, formatting expressions, and simple extraction. Use `Code` only for complex JavaScript: loops across `$input.all()`, grouping, sorting, algorithmic transforms, binary manipulation, or custom libraries.
-
-### 4. Use the AI Agent Pattern With Sub-Nodes
-AI workflows should use a main `@n8n/n8n-nodes-langchain.agent` node and sub-nodes for model, memory, tools, and vector stores. Do not call OpenAI/OpenRouter with raw HTTP for normal chat/agent behavior.
-
-```typescript
-@node({ name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent' })
-Agent = { text: '={{ $json.summary }}' };
-
-@node({
-    name: 'OpenAI Chat Model',
-    type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
-    credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI account' } }
-})
-OpenAIChatModel = {
-    model: 'gpt-4o-mini'
-};
-
-@node({ name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow' })
-Memory = { sessionKey: '={{ $execution.id }}', contextWindowLength: 10 };
-
-@links()
-defineRouting() {
-    this.ChatTrigger.out(0).to(this.Agent.in(0));
-    this.Agent.uses({
-        ai_languageModel: this.OpenAIChatModel.output,
-        ai_memory: this.Memory.output
-    });
-}
-```
-
-### 5. Include Error Workflow References
-Production workflows should reference a separate error workflow in settings. The error workflow contains `n8n-nodes-base.errorTrigger` followed by a native notification node.
-
-```typescript
-@workflow({
-    id: 'lead-router',
-    name: 'Lead Router',
-    active: false,
-    settings: { executionOrder: 'v1', errorWorkflow: 'lead-router-errors' }
-})
-export class LeadRouterWorkflow {}
-```
-
-Do not place `errorTrigger` in the main workflow and assume it handles that workflow's own failures; n8n error triggers run as separate workflows.
-
-### 6. Node-Level Settings (Errors & Retries)
-- **Retry on Failure (`retryOnFail`):** Use this for transient errors, rate limits, or network glitches on external integration nodes (e.g., HTTP Request, Bitrix24, Google, etc.).
-- **Continue on Fail (`continueOnFail`):** Use for non-critical steps where a failure should not stop the entire execution. Always follow nodes with `continueOnFail` with a downstream check or conditional block to handle error shapes and prevent the "green-but-broken" trap.
-- **Do Not Combine:** Avoid setting both `continueOnFail: true` and `retryOnFail: true` on the same node, as this can lead to unexpected behavior.
-- **Syntax in Decorator:**
-  ```typescript
-  @node({
-      id: 'example-node',
-      name: 'Example',
-      type: 'n8n-nodes-base.httpRequest',
-      version: 1,
-      position: [200, 300],
-      onError: 'continueRegularOutput',
-      retryOnFail: true,
-      maxTries: 3,
-      waitBetweenTries: 5000
-  })
-  ```
-
-### 7. Support Community Nodes Deliberately & Safety Zones
-Community/optional nodes are allowed when they are the idiomatic fit. Prioritize using audited **Green Zone** community nodes over raw HTTP Requests when they are a better match, but ensure installation requirements are noted:
-- **Firecrawl (Web Scrape/Crawl)**: `@mendable/n8n-nodes-firecrawl.firecrawl` (requires `@mendable/n8n-nodes-firecrawl` community node and `firecrawlApi` credentials).
-- **Puppeteer (Browser Automation)**: `n8n-nodes-puppeteer.puppeteer` (requires `n8n-nodes-puppeteer` community node, does not require credentials).
-- **Chatwoot**: `@devlikeapro/n8n-nodes-chatwoot.chatwoot` (requires `@devlikeapro/n8n-nodes-chatwoot` community node and `chatwootApi` credentials).
-- **Palatine Speech (Transcription)**: `n8n-nodes-palatine-speech.palatinespeech` (requires `n8n-nodes-palatine-speech` community node and `palatineSpeechApi` credentials).
-- **Global Constants**: `n8n-nodes-globals.globals` (requires `n8n-nodes-globals` community node, no credentials).
-- **Tesseract OCR**: `n8n-nodes-tesseractjs.tesseractjs` (requires `n8n-nodes-tesseractjs` community node, no credentials).
-- **ElevenLabs (Text-to-Speech)**: `@elevenlabs/n8n-nodes-elevenlabs.elevenLabs` (requires `@elevenlabs/n8n-nodes-elevenlabs` community node and `elevenLabsApi` credentials).
-- **Tavily (AI Search)**: `@tavily/n8n-nodes-tavily.tavily` (requires `@tavily/n8n-nodes-tavily` community node and `tavilyApi` credentials).
-- **HTML to PDF**: `n8n-nodes-htmlcsstopdf.htmlcsstopdf` (requires `n8n-nodes-htmlcsstopdf` community node and `htmlcsstopdfApi` credentials).
-- **DOCX generation**: `n8n-nodes-docxtemplater.docxtemplater` (requires `n8n-nodes-docxtemplater` installed via Community Nodes).
-- **Qdrant/RAG**: prefer `@n8n/n8n-nodes-langchain.vectorStoreQdrant` or the installed Qdrant community node with `qdrantApi` credentials.
-
-#### Deprecated & High-Risk (Yellow / Red Zone) Restraints:
-- **Avoid Unscoped Outdated Packages**: Do not use `n8n-nodes-chatwoot`, `n8n-nodes-firecrawl`, `n8n-nodes-elevenlabs`, `n8n-nodes-tavily`, or `n8n-nodes-apify`. Instead, use their scoped active equivalents (e.g. `@devlikeapro/n8n-nodes-chatwoot`, `@mendable/n8n-nodes-firecrawl`, etc.).
-- **Avoid WhatsApp Web Automation Node Types**: Strictly avoid `n8n-nodes-evolution-api`, `n8n-nodes-waha`, or `n8n-nodes-zapi` due to high account ban risk. Use official WhatsApp Business Cloud API node/integrations instead.
-- **Avoid Obsolete Packages**: Avoid packages that have not been updated for over a year (e.g., `n8n-nodes-kommo`, `n8n-nodes-datadog`, `n8n-nodes-difyai`, `n8n-nodes-soaprequest`) due to compatibility risks.
-
-#### Reference Audited Templates:
-When designing common flows, reference these validated template designs:
-- **Template 6270**: Advanced AI Agent with Firecrawl web crawling, Tavily research, and memory/tool integration.
-- **Template 5993**: Audio recording transcription using Palatine Speech, summarization/translation with AI, and ElevenLabs speech generation.
-- **Template 5148**: Customer CRM sync with Chatwoot messaging and Bitrix24 deal creation.
-- **Template 4696**: Global Constants configuration for sharing configuration values across nodes.
-- **Template 4722**: HTML-to-PDF template parsing and dynamic document rendering.
-
-### 8. Validate Idiomatic Patterns
-Run `validate_workflow` on generated TypeScript or compiled JSON. When complete JSON is provided, the MCP server also runs `@n8n/workflow-sdk` validation. Treat warnings as design feedback:
-- `prefer-native-node` — raw `httpRequest` appears to call an integration with a native node.
-- `missing-credential-reference` — authenticated node lacks credential placeholders.
-- `prefer-set-node` — `Code` appears to do simple field mapping.
-- `ai-agent-missing-model` / `ai-agent-sub-node-linking` — Agent lacks model/sub-node wiring.
-- `missing-error-workflow-reference` — main workflow lacks `settings.errorWorkflow`.
-- `community-node-requirement` — target instance must have the optional/community node installed.
-- `sdk-*` — official SDK validation found a structural issue in complete workflow JSON.
-
-### 9. Advanced Sticky Notes (Notes Sticker) & Premium Layouts
-- **Curated Hex Palette:** Always assign modern theme-aware hex colors for sticky notes instead of standard integers:
-  - Trigger nodes: `#fff7e6` (Pastel Yellow)
-  - Logic/Set/If nodes: `#f5f5f5` (Sleek Light Gray)
-  - AI/LangChain nodes: `#f6ffed` (Soft Mint Green)
-  - Integrations: `#e6f7ff` (Clean Ice Blue)
-  - Overview Note: `#f9f0ff` (Soft Lavender)
-- **Dynamic Banner Headers:** Embed Shields.io status badges at the top of the Overview note to act as full-width headers.
-- **Playable Video Embeds:** Embed official YouTube tutorial guides (e.g. `@[youtube](ZCuL2e4zC_4)`) inside the Overview note for workflows utilizing AI/LangChain nodes. Scale Overview height to `480px` to fit the player.
-- **Visual Grouping Backdrops:** Generate large background container notes (`AI Agent Container Backdrop` colored in `#f6ffed`) behind AI Agent clusters. Position the backdrop at `Y = 280` with a `10px` gap below node-specific sticky notes to prevent coordinate collisions.
-
-## Workflow Generation/Lifecycle Steps
-
-### Step 3: Generate Workflow Output
-Prefer decorator TypeScript for reviewable workflows. Use `outputFormat: 'sdk-json'` only when the caller needs JSON directly, and `outputFormat: 'both'` when comparing TypeScript and SDK-normalized JSON.
-
-```json
-{
-    "description": "When a webhook receives a new lead, create a Bitrix24 lead and send a Telegram alert",
-    "workflowName": "Lead Intake",
-    "outputFormat": "decorator-typescript"
-}
-```
-
-### Step 4: Generate TypeScript Code
-Use the decorator pattern:
-
-```typescript
-import { workflow, node, links } from '@n8n-as-code/transformer';
-
-@workflow({
-    id: 'unique-workflow-id',
-    name: 'Workflow Name',
-    active: false,
-    settings: { executionOrder: 'v1' }
-})
-export class MyWorkflow {
-    @node({
-        id: 'node-1',
-        name: 'Trigger',
-        type: 'n8n-nodes-base.webhook',
-        version: 1,
-        position: [200, 300]
-    })
-    Trigger = {
-        httpMethod: 'POST',
-        path: 'my-webhook'
-    };
-
-    @node({
-        id: 'node-2',
-        name: 'Process Data',
-        type: 'n8n-nodes-base.code',
-        version: 1,
-        position: [400, 300]
-    })
-    ProcessData = {
-        jsCode: '// Transform data here'
-    };
-
-    @links()
-    defineRouting() {
-        this.Trigger.out(0).to(this.ProcessData.in(0));
-    }
-}
-```
-
-### Step 5: Compile to JSON
-```typescript
-import { TypeScriptParser, WorkflowBuilder } from '@n8n-as-code/transformer';
-
-const parser = new TypeScriptParser();
-const builder = new WorkflowBuilder();
-
-const ast = await parser.parseFile('my-workflow.workflow.ts');
-const workflowJson = builder.build(ast);
-```
-
-### Step 6: Deploy
-```json
-{
-    "workflowJson": { "name": "Workflow Name", "nodes": [], "connections": {} },
-    "activate": false,
-    "updateExisting": true
-}
-```
-
-Deploy strips read-only fields and filters settings before sending data to n8n. With `updateExisting: true` (the default), it updates a workflow with the same name via `PATCH`; use `updateExisting: false` to always create a new workflow.
-
-## Design Patterns
-
-### Pattern 1: Webhook → Guard → Action
-```typescript
-@workflow({ id: 'webhook-guard', name: 'Secure Webhook Handler' })
-export class SecureWebhookWorkflow {
-    @node({ name: 'Webhook', type: 'n8n-nodes-base.webhook' })
-    Webhook = { httpMethod: 'POST', path: 'secure-endpoint' };
-
-    @node({ name: 'Auth Guard', type: 'n8n-nodes-base.if' })
-    AuthGuard = {
-        conditions: {
-            boolean: [{
-                value1: "={{ $json.headers['x-api-key'] === $env.WEBHOOK_API_KEY }}",
-                value2: true
-            }]
-        }
-    };
-
-    @node({ name: 'Prepare Payload', type: 'n8n-nodes-base.set' })
-    PreparePayload = {
-        mode: 'manual',
-        duplicateItem: false,
-        assignments: {
-            assignments: [
-                { id: 'payload', name: 'payload', value: '={{ $json.body }}', type: 'object' }
-            ]
-        }
-    };
-
-    @node({
-        name: 'Error Alert',
-        type: 'n8n-nodes-base.telegram',
-        credentials: { telegramApi: { id: 'TELEGRAM_CREDENTIAL_ID', name: 'Telegram Bot' } }
-    })
-    ErrorAlert = {
-        operation: 'sendMessage',
-        chatId: '={{ $env.TG_ERROR_CHAT_ID }}',
-        text: '=Auth failed'
-    };
-
-    @links()
-    defineRouting() {
-        this.Webhook.out(0).to(this.AuthGuard.in(0));
-        this.AuthGuard.out(0).to(this.PreparePayload.in(0));
-        this.AuthGuard.out(1).to(this.ErrorAlert.in(0));
-    }
-}
-```
-
-### Pattern 2: Schedule → Fetch → AI → Notify
-```typescript
-@workflow({ id: 'scheduled-ai', name: 'Scheduled AI Report' })
-export class ScheduledAiWorkflow {
-    @node({ name: 'Schedule', type: 'n8n-nodes-base.scheduleTrigger' })
-    Schedule = { rule: { interval: [{ field: 'hours', interval: 24 }] } };
-
-    @node({ name: 'Fetch Data', type: 'n8n-nodes-base.httpRequest' })
-    FetchData = { method: 'GET', url: 'https://api.example.com/data' };
-
-    @node({ name: 'AI Analysis', type: '@n8n/n8n-nodes-langchain.agent' })
-    AiAnalysis = {
-        text: '=Analyze this data and return a short report: {{ JSON.stringify($json) }}'
-    };
-
-    @node({
-        name: 'OpenAI Chat Model',
-        type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
-        credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI account' } }
-    })
-    OpenAIChatModel = {
-        model: 'gpt-4o-mini'
-    };
-
-    @node({
-        name: 'Send Report',
-        type: 'n8n-nodes-base.microsoftTeams',
-        credentials: { microsoftTeamsOAuth2Api: { id: 'MICROSOFT_TEAMS_CREDENTIAL_ID', name: 'Microsoft Teams account' } }
-    })
-    SendReport = {
-        resource: 'chatMessage',
-        operation: 'create',
-        teamId: '={{ $env.TEAMS_TEAM_ID }}',
-        channelId: '={{ $env.TEAMS_CHANNEL_ID }}',
-        message: '=AI report: {{ $json.output }}'
-    };
-
-    @links()
-    defineRouting() {
-        this.Schedule.out(0).to(this.FetchData.in(0));
-        this.FetchData.out(0).to(this.AiAnalysis.in(0));
-        this.AiAnalysis.out(0).to(this.SendReport.in(0));
-        this.AiAnalysis.uses({ ai_languageModel: this.OpenAIChatModel.output });
-    }
-}
-```
-
-### Pattern 3: AI Agent with Tools
-```typescript
-@workflow({ id: 'ai-agent', name: 'AI Agent with Tools' })
-export class AiAgentWorkflow {
-    @node({ name: 'Chat', type: '@n8n/n8n-nodes-langchain.chatTrigger' })
-    Chat = {};
-
-    @node({ name: 'Agent', type: '@n8n/n8n-nodes-langchain.agent' })
-    Agent = {};
-
-    @node({
-        name: 'OpenAI',
-        type: '@n8n/n8n-nodes-langchain.lmChatOpenAi',
-        credentials: { openAiApi: { id: 'OPENAI_CREDENTIAL_ID', name: 'OpenAI' } }
-    })
-    OpenAI = { model: 'gpt-4o-mini' };
-
-    @node({ name: 'Memory', type: '@n8n/n8n-nodes-langchain.memoryBufferWindow' })
-    Memory = {};
-
-    @node({ name: 'Weather Tool', type: 'n8n-nodes-base.httpRequestTool' })
-    WeatherTool = { url: 'https://api.open-meteo.com/v1/forecast' };
-
-    @links()
-    defineRouting() {
-        this.Chat.out(0).to(this.Agent.in(0));
-        this.Agent.uses({
-            ai_languageModel: this.OpenAIChatModel.output,
-            ai_memory: this.Memory.output,
-            ai_tool: [this.WeatherTool.output]
-        });
-    }
-}
-```
-
-## Security Best Practices
-
-1. **Never hardcode secrets** — Use n8n credentials or environment variables
-2. **Validate inputs** — Use `if` nodes for routing and `set` nodes for safe field shaping; reserve `code` for complex validation
-3. **PII masking** — Strip personal data before sending to AI services
-4. **Error handling** — Always include `errorTrigger` nodes for critical workflows
-5. **Rate limiting** — Add `wait` nodes for API polling
-
-## Deployment Checklist
-
-- [ ] Workflow compiles without errors
-- [ ] All credentials configured in n8n UI
-- [ ] Placeholder URLs replaced with real endpoints
-- [ ] Error handling tested
-- [ ] Webhook paths are unique
-- [ ] Schedule intervals are appropriate
-- [ ] Workflow tested in inactive mode first
-
-## Common Issues
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `request/body/id is read-only` | Including `id` in POST | Remove `id` field before deploy |
-| `request/body/active is read-only` | Including `active` in POST | Remove `active` field before deploy |
-| `settings must NOT have additional properties` | Extra settings fields | Filter to allowed settings only |
-| `credentials not found` | Missing credential in n8n | Create credential in n8n UI first |
-| `webhook path already exists` | Duplicate webhook path | Use unique paths per workflow |
-
-## Two-Layer MCP Architecture
-
-This skill works with two complementary MCP layers:
-
-### Layer 1: Workflow Lifecycle
-
-The companion MCP server in this repository (`n8n-workflow-mcp`) owns the workflow artifact lifecycle:
-
-- `design_workflow` — Generate workflow design from description.
-- `compile_workflow` — Compile TypeScript to n8n JSON.
-- `validate_workflow` — Check workflow structure, idiomatic rules, SDK validation, and known-node registry checks.
-- `deploy_workflow` — Deploy to n8n with dry-run and explicit mutation confirmation safeguards.
-- `execute_workflow` — Execute deployed workflows with explicit confirmation.
-- `export_workflow` / `import_workflow` — Move portable workflow JSON safely.
-- `list_credentials` / `list_community_packages` — Inspect credential metadata and optional node availability.
-- `list_workflows` / `get_workflow` — Inspect deployed workflows.
-
-### Layer 2: n8n Intelligence
-
-The already-installed `czlonkowski/n8n-mcp` server owns live n8n knowledge and metadata validation:
-
-- `tools_documentation` — Discover available n8n-mcp tools and recommended lookup flow.
-- `search_nodes` — Find candidate n8n nodes by capability or integration name.
-- `get_node` — Read authoritative node docs, schema, operations, properties, examples, and versions.
-- `validate_node` — Validate a configured node against available metadata.
-- `validate_workflow` — Validate workflow configuration against live n8n metadata.
-- `search_templates` — Find reusable workflow templates before designing common patterns.
-- `get_template` — Inspect a selected template and adapt its proven structure.
-
-### Routing Rules
-
-| Task | Use |
-|------|-----|
-| Choose the correct n8n node | `czlonkowski/n8n-mcp` intelligence layer |
-| Get node schema, parameters, operations, docs | `czlonkowski/n8n-mcp` intelligence layer |
-| Find examples/templates and best-practice patterns | `czlonkowski/n8n-mcp` intelligence layer |
-| Validate a configured node | `czlonkowski/n8n-mcp` intelligence layer |
-| Design workflow structure | Skill logic plus `n8n-workflow-mcp` lifecycle layer |
-| Compile TypeScript to n8n JSON | `n8n-workflow-mcp` lifecycle layer |
-| List workflows or inspect deployed workflow state | `n8n-workflow-mcp` lifecycle layer |
-| Deploy/import/export/execute workflow | `n8n-workflow-mcp` lifecycle layer with explicit safety confirmations |
-
-Operational rule: reference and validation tools from `czlonkowski/n8n-mcp` are safe to use during design. Direct remote management through that server is not part of the default workflow because this repository's lifecycle server owns artifact safety, reviewability, dry-run behavior, and mutation confirmation.
-
-## Examples
-
-### Example 1: Bitrix24 Lead Creation
-```typescript
-@workflow({ id: 'bitrix-lead', name: 'Create Bitrix24 Lead' })
-export class BitrixLeadWorkflow {
-    @node({ name: 'Webhook', type: 'n8n-nodes-base.webhook' })
-    Webhook = { httpMethod: 'POST', path: 'new-lead' };
-
-    @node({ name: 'Prepare Lead', type: 'n8n-nodes-base.set' })
-    PrepareLead = {
-        mode: 'manual',
-        duplicateItem: false,
-        assignments: {
-            assignments: [
-                { id: 'title', name: 'title', value: '={{ $json.body.name }}', type: 'string' },
-                { id: 'phone', name: 'phone', value: '={{ $json.body.phone }}', type: 'string' }
-            ]
-        }
-    };
-
-    @node({
-        name: 'Create Lead',
-        type: 'n8n-nodes-base.bitrix24',
-        credentials: { bitrix24OAuth2Api: { id: 'BITRIX24_CREDENTIAL_ID', name: 'Bitrix24 account' } }
-    })
-    CreateLead = {
-        resource: 'lead',
-        operation: 'create',
-        fields: { TITLE: '={{ $json.title }}', PHONE: [{ VALUE: '={{ $json.phone }}' }] }
-    };
-
-    @links()
-    defineRouting() {
-        this.Webhook.out(0).to(this.PrepareLead.in(0));
-        this.PrepareLead.out(0).to(this.CreateLead.in(0));
-    }
-}
-```
-
-### Example 2: Document OCR Pipeline
-```typescript
-@workflow({ id: 'ocr-pipeline', name: 'Document OCR' })
-export class OcrWorkflow {
-    @node({ name: 'Upload', type: 'n8n-nodes-base.webhook' })
-    Upload = { httpMethod: 'POST', path: 'upload-doc' };
-
-    @node({ name: 'Validate File Type', type: 'n8n-nodes-base.if' })
-    ValidateFileType = {
-        conditions: {
-            conditions: [{ leftValue: '={{ $json.body.fileType }}', rightValue: 'pdf|jpg|png', operator: { type: 'string', operation: 'regex' } }],
-            combinator: 'and'
-        }
-    };
-
-    @node({ name: 'OCR', type: '@n8n/n8n-nodes-langchain.googleGemini' })
-    Ocr = { model: 'gemini-pro-vision' };
-
-    @node({ name: 'Save', type: 'n8n-nodes-base.httpRequest' })
-    Save = {
-        method: 'POST',
-        url: 'https://api.example.com/save',
-        jsonBody: '={"text": "{{$json.content}}"}'
-    };
-
-    @links()
-    defineRouting() {
-        this.Upload.out(0).to(this.ValidateFileType.in(0));
-        this.ValidateFileType.out(0).to(this.Ocr.in(0));
-        this.Ocr.out(0).to(this.Save.in(0));
-    }
-}
-```
-
-## AI & Multi-Agent Orchestration Patterns
-
-When designing advanced AI workflows, use the following orchestration principles:
-
-### 1. Structured System Prompts (Persona & Constraints)
-Inside the `@n8n/n8n-nodes-langchain.agent` node's text/prompt or system instructions, follow a strict structure to prevent hallucination and align execution:
-- **Role/Persona**: Define the agent's identity, expertise, and target audience.
-- **Rules & Constraints**: List explicit boundaries (e.g., "Do not guess missing information", "Only call tools when necessary").
-- **Format Requirements**: Specify expected output shapes (e.g., JSON-only, markdown tables).
-
-### 2. Custom HTTP & Workflow Tools
-Provide detailed schemas and descriptions for tools attached to an agent:
-- **Parameter Descriptions**: Every property in input parameters must have a descriptive comment explaining its purpose, format, and allowed values. This is what the model reads to determine whether to call the tool.
-- **Workflow Tools**: Use the `n8n-nodes-base.executeWorkflowTool` or similar pattern to modularize complex actions (e.g., executing a database query and formatting the output) rather than letting the agent perform raw actions.
-
-### 3. Multi-Agent Orchestration Models
-For complex multi-step reasoning, avoid a single agent with 10+ tools. Instead, construct a multi-agent model using sub-workflows:
-- **Supervisor/Router Pattern**: Use a main router agent or an `if`/`switch` logic node to parse requests and trigger separate sub-workflows (workers) via webhook or `executeWorkflow` nodes.
-- **State Handoff**: Pass transaction/state variables between sub-workflows using structured payload objects containing a `sessionKey` or `executionId` to preserve context.
-
-## Business Automation Playbooks
-
-To ensure production-grade reliability for common business integrations:
-
-### 1. Idempotency & Duplicate Guards
-For webhook-driven data integrations (e.g., payment processing, CRM syncs):
-- **Verification Cache**: Store a hash of webhook payloads or the unique transaction ID in a database or Redis.
-- **Guard Node**: Use an `if` node to check if the ID already exists before executing downstream mutations (creation, updates).
-
-### 2. Human-in-the-Loop (HITL) Approval Queues
-For high-impact or sensitive operations (e.g., publishing content, sending mass emails, refunding payments):
-- **Suspension Trigger**: Send a notification (Slack, Teams, or Telegram) with approval and rejection callback buttons.
-- **Callback Endpoint**: Use a webhook node that accepts the button action payload, updates the transaction status, and either proceeds with the action or logs the cancellation.
+### 4. Generate `Set` Nodes for Simple Transforms
+Use `n8n-nodes-base.set` for field mapping, renaming, static defaults, formatting expressions, and simple extraction. Use `Code` only for complex JavaScript operations (e.g. loops, grouping, complex custom algorithms).
+
+### 5. Schema Compliance & Escaping (CRITICAL)
+- **Condition Operators (IF, Switch, Filter)**: For IF (`n8n-nodes-base.if`), Switch (`n8n-nodes-base.switch`), and Filter (`n8n-nodes-base.filter`) nodes version 2.0+, condition operators MUST be generated as nested objects (e.g., `operator: { "type": "string", "operation": "equals" }`), not simple strings.
+- **Set Nodes**: For Set (`n8n-nodes-base.set`) nodes version 3.0+, values must use the `fields` array structure (e.g., `fields: [ { name: "fieldName", value: "fieldValue", type: "string" } ]`) instead of legacy `values` object structures.
+- **Quotes Escaping**: When generating nested JS/JSON code inside node parameters (such as `jsCode` in Code nodes or mock data), ensure double quotes are properly escaped (`\"` or `\\"` depending on nesting depth) so the final JSON remains valid.
+
+### 6. Deploy Checklists and Security
+- Ensure the workflow compiles and handles errors gracefully.
+- Placeholders and URLs should be configurable.
+- Use rate limits/wait states where appropriate for high-volume API requests.
 
 ## Resources
 
@@ -671,3 +112,127 @@ For high-impact or sensitive operations (e.g., publishing content, sending mass 
 - [n8n REST API Docs](https://docs.n8n.io/api/)
 - [n8n Node Reference](https://docs.n8n.io/integrations/builtin/)
 
+---
+
+## Universal Node Validator Code
+
+Below is the portable Python code for validation. To run it in any workspace, write this code block to a temporary file (e.g. `node_validator.py`), run it via `python3 node_validator.py <workflow.json>`, and then delete the temporary file.
+
+```python
+import os, json, sys, requests
+
+STATIC_SCHEMA_RULES = {
+    "n8n-nodes-base.if": [
+        {"min_version": 2.0, "validate_func": lambda n, p: check_if_style(n, p)}
+    ],
+    "n8n-nodes-base.filter": [
+        {"min_version": 2.0, "validate_func": lambda n, p: check_if_style(n, p)}
+    ],
+    "n8n-nodes-base.switch": [
+        {"min_version": 2.0, "validate_func": lambda n, p: check_switch_style(n, p)}
+    ],
+    "n8n-nodes-base.set": [
+        {"min_version": 3.0, "validate_func": lambda n, p: check_set_style(n, p)}
+    ]
+}
+
+def check_if_style(node, params):
+    errors = []
+    for idx, cond in enumerate(params.get("conditions", {}).get("conditions", [])):
+        operator = cond.get("operator")
+        if operator is not None and isinstance(operator, str):
+            errors.append(f"Condition {idx} uses legacy flat string operator: '{operator}'")
+    return errors
+
+def check_switch_style(node, params):
+    errors = []
+    for idx, rule in enumerate(params.get("rules", {}).get("rules", [])):
+        for c_idx, cond in enumerate(rule.get("conditions", {}).get("conditions", [])):
+            operator = cond.get("operator")
+            if operator is not None and isinstance(operator, str):
+                errors.append(f"Rule {idx}, condition {c_idx} uses legacy flat string operator: '{operator}'")
+    return errors
+
+def check_set_style(node, params):
+    return ["Uses legacy 'values' object. Set v3+ requires 'fields' array."] if "values" in params else []
+
+def load_config():
+    url = os.environ.get("N8N_BASE_URL")
+    key = os.environ.get("N8N_API_KEY")
+    for p in ["course_materials/test_runner/config.json", "config.json"]:
+        if os.path.exists(p):
+            try:
+                with open(p, 'r') as f:
+                    conf = json.load(f)
+                    url = url or conf.get("n8n_api_url")
+                    key = key or conf.get("n8n_api_key")
+            except Exception: pass
+    return url, key
+
+def fetch_schemas(url, key):
+    if not url or not key: return None
+    cache_dir = os.path.expanduser("~/.cache/n8n")
+    cache_path = os.path.join(cache_dir, "node_schemas_cache.json")
+    import time
+    if os.path.exists(cache_path):
+        if time.time() - os.path.getmtime(cache_path) < 86400:
+            try:
+                with open(cache_path, 'r') as f: return json.load(f)
+            except Exception: pass
+    try:
+        r = requests.get(f"{url.rstrip('/')}/node-types", headers={"X-N8N-API-KEY": key}, timeout=5)
+        if r.status_code == 200:
+            schemas = {nt["name"]: nt for nt in r.json() if "name" in nt}
+            os.makedirs(cache_dir, exist_ok=True)
+            with open(cache_path, 'w') as f: json.dump(schemas, f)
+            return schemas
+    except Exception: pass
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r') as f: return json.load(f)
+        except Exception: pass
+    return None
+
+def validate_node_dynamic(node, schema):
+    errors = []
+    params = node.get("parameters", {})
+    prop_map = {p["name"]: p for p in schema.get("properties", [])}
+    for name, val in params.items():
+        if isinstance(val, str) and val.startswith("="): continue
+        prop = prop_map.get(name)
+        if not prop:
+            errors.append(f"Param '{name}' not defined in schema.")
+            continue
+        if prop.get("type") == "filter" and isinstance(val, dict):
+            for idx, cond in enumerate(val.get("conditions", [])):
+                if isinstance(cond.get("operator"), str):
+                    errors.append(f"Param '{name}' condition {idx} uses legacy string operator.")
+    return errors
+
+def main():
+    if len(sys.argv) < 2: sys.exit(1)
+    target = sys.argv[1]
+    url, key = load_config()
+    schemas = fetch_schemas(url, key)
+    with open(target, 'r') as f: data = json.load(f)
+    errors = []
+    for node in data.get("nodes", []):
+        ntype = node.get("type")
+        nname = node.get("name", "node")
+        nver = float(node.get("typeVersion", 1))
+        if ntype in STATIC_SCHEMA_RULES:
+            for rule in STATIC_SCHEMA_RULES[ntype]:
+                if nver >= rule["min_version"]:
+                    for err in rule["validate_func"](node, node.get("parameters", {})):
+                        errors.append(f"'{nname}' ({ntype} v{nver}): {err}")
+        if schemas and ntype in schemas:
+            for err in validate_node_dynamic(node, schemas[ntype]):
+                errors.append(f"'{nname}' dynamic: {err}")
+    if errors:
+        for err in errors: print(err)
+        sys.exit(1)
+    else:
+        sys.exit(0)
+
+if __name__ == '__main__': main()
+```
