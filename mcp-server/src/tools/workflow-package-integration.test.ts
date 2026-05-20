@@ -437,11 +437,13 @@ describe('n8n package integration', () => {
     const stickyNotes = workflow.nodes.filter((n) => n.type === 'n8n-nodes-base.stickyNote');
     expect(stickyNotes.length).toBeGreaterThan(1);
 
-    const overviewNote = stickyNotes.find((n) => n.name === 'Workflow Overview Note');
+        const overviewNote = stickyNotes.find((n) => n.name === 'Workflow Overview Note');
     expect(overviewNote).toBeDefined();
     expect(overviewNote?.position).toEqual([-180, 120]);
     expect(overviewNote?.parameters?.content).toContain('# 📋 Workflow Overview');
     expect(overviewNote?.parameters?.content).toContain('https://img.shields.io/badge/n8n-workflow_designer-EA4AAA#full-width');
+    expect(overviewNote?.parameters?.content).toContain('\n');
+    expect(overviewNote?.parameters?.content).not.toContain('\\n');
     expect(overviewNote?.parameters?.width).toBe(340);
     expect(overviewNote?.parameters?.height).toBe(300);
     expect(overviewNote?.parameters?.color).toBe('#f9f0ff');
