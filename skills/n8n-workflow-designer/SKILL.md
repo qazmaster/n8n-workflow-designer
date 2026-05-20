@@ -610,8 +610,43 @@ export class OcrWorkflow {
 }
 ```
 
+## AI & Multi-Agent Orchestration Patterns
+
+When designing advanced AI workflows, use the following orchestration principles:
+
+### 1. Structured System Prompts (Persona & Constraints)
+Inside the `@n8n/n8n-nodes-langchain.agent` node's text/prompt or system instructions, follow a strict structure to prevent hallucination and align execution:
+- **Role/Persona**: Define the agent's identity, expertise, and target audience.
+- **Rules & Constraints**: List explicit boundaries (e.g., "Do not guess missing information", "Only call tools when necessary").
+- **Format Requirements**: Specify expected output shapes (e.g., JSON-only, markdown tables).
+
+### 2. Custom HTTP & Workflow Tools
+Provide detailed schemas and descriptions for tools attached to an agent:
+- **Parameter Descriptions**: Every property in input parameters must have a descriptive comment explaining its purpose, format, and allowed values. This is what the model reads to determine whether to call the tool.
+- **Workflow Tools**: Use the `n8n-nodes-base.executeWorkflowTool` or similar pattern to modularize complex actions (e.g., executing a database query and formatting the output) rather than letting the agent perform raw actions.
+
+### 3. Multi-Agent Orchestration Models
+For complex multi-step reasoning, avoid a single agent with 10+ tools. Instead, construct a multi-agent model using sub-workflows:
+- **Supervisor/Router Pattern**: Use a main router agent or an `if`/`switch` logic node to parse requests and trigger separate sub-workflows (workers) via webhook or `executeWorkflow` nodes.
+- **State Handoff**: Pass transaction/state variables between sub-workflows using structured payload objects containing a `sessionKey` or `executionId` to preserve context.
+
+## Business Automation Playbooks
+
+To ensure production-grade reliability for common business integrations:
+
+### 1. Idempotency & Duplicate Guards
+For webhook-driven data integrations (e.g., payment processing, CRM syncs):
+- **Verification Cache**: Store a hash of webhook payloads or the unique transaction ID in a database or Redis.
+- **Guard Node**: Use an `if` node to check if the ID already exists before executing downstream mutations (creation, updates).
+
+### 2. Human-in-the-Loop (HITL) Approval Queues
+For high-impact or sensitive operations (e.g., publishing content, sending mass emails, refunding payments):
+- **Suspension Trigger**: Send a notification (Slack, Teams, or Telegram) with approval and rejection callback buttons.
+- **Callback Endpoint**: Use a webhook node that accepts the button action payload, updates the transaction status, and either proceeds with the action or logs the cancellation.
+
 ## Resources
 
 - [n8n-as-code Transformer](https://github.com/EtienneLescot/n8n-as-code)
 - [n8n REST API Docs](https://docs.n8n.io/api/)
 - [n8n Node Reference](https://docs.n8n.io/integrations/builtin/)
+
