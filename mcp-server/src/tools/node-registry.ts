@@ -51,6 +51,24 @@ export const CREDENTIAL_PLACEHOLDERS: Record<string, Record<string, CredentialPl
   '@n8n/n8n-nodes-langchain.vectorStoreQdrant': {
     qdrantApi: { id: 'QDRANT_CREDENTIAL_ID', name: 'Qdrant account' },
   },
+  '@mendable/n8n-nodes-firecrawl.firecrawl': {
+    firecrawlApi: { id: 'FIRECRAWL_CREDENTIAL_ID', name: 'Firecrawl API key' },
+  },
+  'n8n-nodes-palatine-speech.palatinespeech': {
+    palatineSpeechApi: { id: 'PALATINE_SPEECH_CREDENTIAL_ID', name: 'Palatine Speech API key' },
+  },
+  '@devlikeapro/n8n-nodes-chatwoot.chatwoot': {
+    chatwootApi: { id: 'CHATWOOT_CREDENTIAL_ID', name: 'Chatwoot account' },
+  },
+  '@elevenlabs/n8n-nodes-elevenlabs.elevenLabs': {
+    elevenLabsApi: { id: 'ELEVENLABS_CREDENTIAL_ID', name: 'ElevenLabs account' },
+  },
+  '@tavily/n8n-nodes-tavily.tavily': {
+    tavilyApi: { id: 'TAVILY_CREDENTIAL_ID', name: 'Tavily API key' },
+  },
+  'n8n-nodes-htmlcsstopdf.htmlcsstopdf': {
+    htmlcsstopdfApi: { id: 'HTMLCSSTOPDF_CREDENTIAL_ID', name: 'PDFMunk API key' },
+  },
 };
 
 export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
@@ -124,6 +142,66 @@ export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
     label: 'DOCX Templater',
     communityPackage: 'n8n-nodes-docxtemplater',
     installHint: 'Install n8n-nodes-docxtemplater before import/deploy.',
+  },
+  'n8n-nodes-palatine-speech.palatinespeech': {
+    type: 'n8n-nodes-palatine-speech.palatinespeech',
+    label: 'Palatine Speech',
+    credentialTypes: ['palatineSpeechApi'],
+    communityPackage: 'n8n-nodes-palatine-speech',
+    installHint: 'Install n8n-nodes-palatine-speech community node before import/deploy.',
+  },
+  '@mendable/n8n-nodes-firecrawl.firecrawl': {
+    type: '@mendable/n8n-nodes-firecrawl.firecrawl',
+    label: 'Firecrawl',
+    credentialTypes: ['firecrawlApi'],
+    communityPackage: '@mendable/n8n-nodes-firecrawl',
+    installHint: 'Install @mendable/n8n-nodes-firecrawl community node before import/deploy.',
+  },
+  'n8n-nodes-puppeteer.puppeteer': {
+    type: 'n8n-nodes-puppeteer.puppeteer',
+    label: 'Puppeteer Browser',
+    communityPackage: 'n8n-nodes-puppeteer',
+    installHint: 'Install n8n-nodes-puppeteer community node before import/deploy. Requires headless chrome in n8n environment.',
+  },
+  '@devlikeapro/n8n-nodes-chatwoot.chatwoot': {
+    type: '@devlikeapro/n8n-nodes-chatwoot.chatwoot',
+    label: 'Chatwoot',
+    credentialTypes: ['chatwootApi'],
+    communityPackage: '@devlikeapro/n8n-nodes-chatwoot',
+    installHint: 'Install @devlikeapro/n8n-nodes-chatwoot community node before import/deploy.',
+  },
+  'n8n-nodes-globals.globals': {
+    type: 'n8n-nodes-globals.globals',
+    label: 'Global Constants',
+    communityPackage: 'n8n-nodes-globals',
+    installHint: 'Install n8n-nodes-globals community node before import/deploy.',
+  },
+  'n8n-nodes-tesseractjs.tesseractjs': {
+    type: 'n8n-nodes-tesseractjs.tesseractjs',
+    label: 'Tesseract OCR',
+    communityPackage: 'n8n-nodes-tesseractjs',
+    installHint: 'Install n8n-nodes-tesseractjs community node before import/deploy.',
+  },
+  '@elevenlabs/n8n-nodes-elevenlabs.elevenLabs': {
+    type: '@elevenlabs/n8n-nodes-elevenlabs.elevenLabs',
+    label: 'ElevenLabs Speech',
+    credentialTypes: ['elevenLabsApi'],
+    communityPackage: '@elevenlabs/n8n-nodes-elevenlabs',
+    installHint: 'Install @elevenlabs/n8n-nodes-elevenlabs community node before import/deploy.',
+  },
+  '@tavily/n8n-nodes-tavily.tavily': {
+    type: '@tavily/n8n-nodes-tavily.tavily',
+    label: 'Tavily Search',
+    credentialTypes: ['tavilyApi'],
+    communityPackage: '@tavily/n8n-nodes-tavily',
+    installHint: 'Install @tavily/n8n-nodes-tavily community node before import/deploy.',
+  },
+  'n8n-nodes-htmlcsstopdf.htmlcsstopdf': {
+    type: 'n8n-nodes-htmlcsstopdf.htmlcsstopdf',
+    label: 'HTML to PDF Converter',
+    credentialTypes: ['htmlcsstopdfApi'],
+    communityPackage: 'n8n-nodes-htmlcsstopdf',
+    installHint: 'Install n8n-nodes-htmlcsstopdf community node before import/deploy.',
   },
 };
 

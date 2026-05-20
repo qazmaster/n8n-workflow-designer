@@ -492,6 +492,54 @@ describe('n8n package integration', () => {
     expect(backdropNote?.parameters?.width).toBe(380);
     expect(backdropNote?.parameters?.height).toBe(340);
   });
+
+  it('validates deprecated or high-risk community packages', async () => {
+    const result = await validateWorkflow({
+      workflowJson: {
+        name: 'Deprecated Community Node Test',
+        nodes: [
+          {
+            id: 'node-evolution',
+            name: 'Evolution API',
+            type: 'n8n-nodes-evolution-api.evolutionApi',
+            typeVersion: 1,
+            position: [0, 0],
+            parameters: {},
+          },
+          {
+            id: 'node-chatwoot-legacy',
+            name: 'Legacy Chatwoot',
+            type: 'n8n-nodes-chatwoot.chatwoot',
+            typeVersion: 1,
+            position: [200, 0],
+            parameters: {},
+          }
+        ],
+        connections: {},
+      },
+    });
+
+    const warningCodes = result.warnings.map(w => w.code);
+    expect(warningCodes).toContain('deprecated-community-node');
+    expect(result.warnings.some(w => w.message.includes('account ban risk'))).toBe(true);
+    expect(result.warnings.some(w => w.message.includes('unscoped'))).toBe(true);
+  });
+
+  it('generates firecrawl and palatine speech community nodes from prompt keywords', async () => {
+    const code = await designWorkflow({
+      description: 'When webhook receives a payload, scrape the web page with firecrawl and transcribe audio with palatine speech',
+      workflowName: 'Community Node Automation',
+      includeErrorHandling: false,
+    });
+
+    expect(code).toContain('// Community nodes required:');
+    expect(code).toContain('@mendable/n8n-nodes-firecrawl.firecrawl (@mendable/n8n-nodes-firecrawl)');
+    expect(code).toContain('n8n-nodes-palatine-speech.palatinespeech (n8n-nodes-palatine-speech)');
+
+    const compiled = await compileWorkflow({ typescriptCode: code });
+    expect(compiled.nodes.map(n => n.type)).toContain('@mendable/n8n-nodes-firecrawl.firecrawl');
+    expect(compiled.nodes.map(n => n.type)).toContain('n8n-nodes-palatine-speech.palatinespeech');
+  });
 });
 
 function jsonResponse(payload: unknown): Response {
