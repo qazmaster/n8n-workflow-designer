@@ -96,6 +96,14 @@ Authenticated nodes must include a `credentials` object with placeholder IDs/nam
 ### 4. Generate `Set` Nodes for Simple Transforms
 Use `n8n-nodes-base.set` for field mapping, renaming, static defaults, formatting expressions, and simple extraction. Use `Code` only for complex JavaScript operations (e.g. loops, grouping, complex custom algorithms).
 
+### 4.5 Avoid Monolithic Code Nodes for Flow Control
+Never use a single complex `Code` node (e.g., 30+ lines of JavaScript/Python) to handle conditional branching, routing, filtering, or looping that can be implemented with native flow control nodes. Using JavaScript logic inside a Code node to implement custom flow routing is a critical anti-pattern.
+- Use IF (`n8n-nodes-base.if`) or Switch (`n8n-nodes-base.switch`) for conditional branching and routing.
+- Use Filter (`n8n-nodes-base.filter`) for filtering item arrays.
+- Use Split In Batches (`n8n-nodes-base.splitInBatches`) for looping over items.
+- Keep Code nodes minimal and focused only on data transformation.
+
+
 ### 5. Schema Compliance & Escaping (CRITICAL)
 - **Condition Operators (IF, Switch, Filter)**: For IF (`n8n-nodes-base.if`), Switch (`n8n-nodes-base.switch`), and Filter (`n8n-nodes-base.filter`) nodes version 2.0+, condition operators MUST be generated as nested objects (e.g., `operator: { "type": "string", "operation": "equals" }`), not simple strings.
 - **Set Nodes**: For Set (`n8n-nodes-base.set`) nodes version 3.0+, values must use the `fields` array structure (e.g., `fields: [ { name: "fieldName", value: "fieldValue", type: "string" } ]`) instead of legacy `values` object structures.

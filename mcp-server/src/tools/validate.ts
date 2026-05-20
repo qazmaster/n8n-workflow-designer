@@ -139,6 +139,7 @@ function validateTypeScript(code: string, issues: ValidationIssue[]): void {
   validateErrorWorkflowReference(code, issues);
   validateAiAgentPattern(code, issues);
   validateSetVsCode(code, issues);
+  validateCodeFlowControlInTypeScript(code, issues);
   validateCommunityNodes(code, issues);
   validateCredentialReferencesInText(code, issues);
   validateDeprecatedCommunityNodes(code, issues);
@@ -194,8 +195,19 @@ function validateWorkflowJson(
       }
     }
 
-    if (node.type === 'n8n-nodes-base.code' && /prepare|format|map|rename|set|transform/i.test(node.name || serialized)) {
-      issues.push(createSetNodeIssue(node.name));
+    if (node.type === 'n8n-nodes-base.code') {
+      if (/prepare|format|map|rename|set|transform/i.test(node.name || serialized)) {
+        issues.push(createSetNodeIssue(node.name));
+      }
+      const params = node.parameters || {};
+      const jsCode = typeof params.jsCode === 'string' ? params.jsCode : '';
+      const pythonCode = typeof params.pythonCode === 'string' ? params.pythonCode : '';
+      if (jsCode) {
+        checkCodeForFlowControl(jsCode, node.name, issues);
+      }
+      if (pythonCode) {
+        checkCodeForFlowControl(pythonCode, node.name, issues);
+      }
     }
 
     if (node.type && communityPackageFor(node.type)) {
@@ -367,6 +379,42 @@ function validateSetVsCode(code: string, issues: ValidationIssue[]): void {
     if (/prepare|format|map|rename|set|transform|return\s+\{?\s*json/i.test(block)) {
       issues.push(createSetNodeIssue(extractNodeName(block)));
     }
+  }
+}
+
+function validateCodeFlowControlInTypeScript(code: string, issues: ValidationIssue[]): void {
+  const parts = code.split(/@node\(/);
+  for (let i = 1; i < parts.length; i++) {
+    const part = '@node(' + parts[i];
+    if (!part.includes('n8n-nodes-base.code')) {
+      continue;
+    }
+    const name = extractNodeName(part);
+    const jsCodeMatch = part.match(/jsCode\s*:\s*(['"`])([\s\S]*?)\1/);
+    if (jsCodeMatch) {
+      checkCodeForFlowControl(jsCodeMatch[2], name, issues);
+    }
+    const pythonCodeMatch = part.match(/pythonCode\s*:\s*(['"`])([\s\S]*?)\1/);
+    if (pythonCodeMatch) {
+      checkCodeForFlowControl(pythonCodeMatch[2], name, issues);
+    }
+  }
+}
+
+function checkCodeForFlowControl(codeContent: string, nodeName: string | undefined, issues: ValidationIssue[]): void {
+  const linesCount = codeContent.split('\n').length;
+  const hasBranching = /if\s*\(|else|switch\s*\(|case\s+/.test(codeContent);
+  const hasFiltering = /\.filter\s*\(/.test(codeContent);
+  const hasLooping = /\.map\s*\(|\.forEach\s*\(|for\s*\(|while\s*\(/.test(codeContent);
+
+  if (linesCount > 15 && (hasBranching || hasFiltering || hasLooping)) {
+    issues.push({
+      severity: 'warning',
+      code: 'prefer-native-flow-control',
+      node: nodeName,
+      message: `Code node contains branching, filtering, or looping logic (${linesCount} lines) which should be implemented using native n8n nodes.`,
+      recommendation: `Replace JavaScript/Python conditional/loop logic with native n8n flow control nodes:\n- Use IF (n8n-nodes-base.if) or Switch (n8n-nodes-base.switch) for branching/conditions.\n- Use Filter (n8n-nodes-base.filter) for filtering items.\n- Use Split In Batches (n8n-nodes-base.splitInBatches) for looping over items.\n- Keep Code nodes minimal and only for complex data transformations that cannot be done with Set or Merge nodes.`,
+    });
   }
 }
 

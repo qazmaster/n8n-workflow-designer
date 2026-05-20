@@ -540,6 +540,93 @@ describe('n8n package integration', () => {
     expect(compiled.nodes.map(n => n.type)).toContain('@mendable/n8n-nodes-firecrawl.firecrawl');
     expect(compiled.nodes.map(n => n.type)).toContain('n8n-nodes-palatine-speech.palatinespeech');
   });
+
+  it('validates Code nodes used for flow control instead of native nodes', async () => {
+    // 1. Test JSON workflow validation
+    const jsonResult = await validateWorkflow({
+      workflowJson: {
+        name: 'Monolithic Code Node Test',
+        nodes: [
+          {
+            id: 'node-code',
+            name: 'Flow Control Node',
+            type: 'n8n-nodes-base.code',
+            typeVersion: 1,
+            position: [0, 0],
+            parameters: {
+              jsCode: `// Some complex JavaScript code
+const items = [{ id: 1, val: 5 }, { id: 2, val: 12 }, { id: 3, val: 18 }];
+const filtered = items.filter(item => item.val > 10);
+for (const item of filtered) {
+  if (item.val === 12) {
+    item.status = 'medium';
+  } else {
+    item.status = 'high';
+  }
+}
+// more lines to exceed 15 lines threshold
+// line 11
+// line 12
+// line 13
+// line 14
+// line 15
+// line 16
+// line 17
+// line 18
+return filtered;`
+            },
+          }
+        ],
+        connections: {},
+      },
+    });
+
+    expect(jsonResult.warnings.map(w => w.code)).toContain('prefer-native-flow-control');
+
+    // 2. Test TypeScript workflow validation
+    const tsCode = `
+import { Workflow, node } from '@n8n-as-code/decorators';
+
+@Workflow({
+  name: 'TypeScript Code Node Test',
+})
+export class FlowControlWorkflow {
+  @node({
+    id: 'node-code',
+    name: 'Flow Control Node',
+    type: 'n8n-nodes-base.code',
+    version: 1,
+    position: [0, 0],
+  })
+  FlowControlNode = {
+    jsCode: \`
+const items = [{ id: 1, val: 5 }, { id: 2, val: 12 }, { id: 3, val: 18 }];
+const filtered = items.filter(item => item.val > 10);
+for (const item of filtered) {
+  if (item.val === 12) {
+    item.status = 'medium';
+  } else {
+    item.status = 'high';
+  }
+}
+// line 11
+// line 12
+// line 13
+// line 14
+// line 15
+// line 16
+// line 17
+// line 18
+return filtered;\`
+  };
+}
+`;
+    const tsResult = await validateWorkflow({
+      typescriptCode: tsCode,
+    });
+
+    expect(tsResult.warnings.map(w => w.code)).toContain('prefer-native-flow-control');
+  });
 });
 
 function jsonResponse(payload: unknown): Response {
