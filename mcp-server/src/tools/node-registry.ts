@@ -24,6 +24,9 @@ export const CREDENTIAL_PLACEHOLDERS: Record<string, Record<string, CredentialPl
   'n8n-nodes-base.bitrix24': {
     bitrix24OAuth2Api: { id: 'BITRIX24_CREDENTIAL_ID', name: 'Bitrix24 account' },
   },
+  'n8n-nodes-bitrix.bitrix': {
+    bitrixApi: { id: 'BITRIX_CREDENTIAL_ID', name: 'Bitrix24 account' },
+  },
   'n8n-nodes-base.microsoftTeams': {
     microsoftTeamsOAuth2Api: { id: 'MICROSOFT_TEAMS_CREDENTIAL_ID', name: 'Microsoft Teams account' },
   },
@@ -96,6 +99,13 @@ export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
     label: 'Bitrix24',
     credentialTypes: ['bitrix24OAuth2Api'],
   },
+  'n8n-nodes-bitrix.bitrix': {
+    type: 'n8n-nodes-bitrix.bitrix',
+    label: 'Bitrix24 (Community)',
+    credentialTypes: ['bitrixApi'],
+    communityPackage: 'n8n-nodes-bitrix',
+    installHint: 'Install n8n-nodes-bitrix community node before import/deploy.',
+  },
   'n8n-nodes-base.microsoftTeams': {
     type: 'n8n-nodes-base.microsoftTeams',
     label: 'Microsoft Teams',
@@ -148,6 +158,12 @@ export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
     label: 'DOCX Templater',
     communityPackage: 'n8n-nodes-docxtemplater',
     installHint: 'Install n8n-nodes-docxtemplater before import/deploy.',
+  },
+  '@mazix/n8n-nodes-converter-documents.converterDocuments': {
+    type: '@mazix/n8n-nodes-converter-documents.converterDocuments',
+    label: 'Document Converter',
+    communityPackage: '@mazix/n8n-nodes-converter-documents',
+    installHint: 'Install @mazix/n8n-nodes-converter-documents community node before import/deploy.',
   },
   'n8n-nodes-palatine-speech.palatinespeech': {
     type: 'n8n-nodes-palatine-speech.palatinespeech',

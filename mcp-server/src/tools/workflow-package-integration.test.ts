@@ -543,6 +543,22 @@ describe('n8n package integration', () => {
     expect(compiled.nodes.map(n => n.type)).toContain('n8n-nodes-palatine-speech.palatinespeech');
   });
 
+  it('generates bitrix community and document converter nodes from prompt keywords', async () => {
+    const code = await designWorkflow({
+      description: 'When a webhook receives a file, convert document to markdown and upload lead to community bitrix CRM',
+      workflowName: 'Bitrix and Document Conversion',
+      includeErrorHandling: false,
+    });
+
+    expect(code).toContain('// Community nodes required:');
+    expect(code).toContain('@mazix/n8n-nodes-converter-documents.converterDocuments (@mazix/n8n-nodes-converter-documents)');
+    expect(code).toContain('n8n-nodes-bitrix.bitrix (n8n-nodes-bitrix)');
+
+    const compiled = await compileWorkflow({ typescriptCode: code });
+    expect(compiled.nodes.map(n => n.type)).toContain('@mazix/n8n-nodes-converter-documents.converterDocuments');
+    expect(compiled.nodes.map(n => n.type)).toContain('n8n-nodes-bitrix.bitrix');
+  });
+
   it('validates Code nodes used for flow control instead of native nodes', async () => {
     // 1. Test JSON workflow validation
     const jsonResult = await validateWorkflow({

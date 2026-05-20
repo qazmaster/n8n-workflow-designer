@@ -163,7 +163,21 @@ function buildWorkflowPlan(args: {
   }
 
   if (lower.includes('bitrix') || lower.includes('crm')) {
-    nodes.push(createBitrixNode(nodes.length));
+    nodes.push(createBitrixNode(nodes.length, args.enableCommunityNodes, lower));
+  }
+
+  if (
+    lower.includes('convert document') ||
+    lower.includes('convert file') ||
+    lower.includes('parse document') ||
+    lower.includes('file to text') ||
+    lower.includes('pdf to text') ||
+    lower.includes('pdf to markdown') ||
+    lower.includes('docx to markdown') ||
+    lower.includes('file converter') ||
+    lower.includes('converter documents')
+  ) {
+    nodes.push(createConverterDocumentsNode(nodes.length, args.enableCommunityNodes));
   }
 
   if (lower.includes('docx') || lower.includes('document') || lower.includes('template')) {
@@ -298,6 +312,8 @@ function applyNodeSettingsHeuristics(nodes: WorkflowNode[], description: string)
     
     const isIntegrationNode = [
       'n8n-nodes-base.bitrix24',
+      'n8n-nodes-bitrix.bitrix',
+      '@mazix/n8n-nodes-converter-documents.converterDocuments',
       'n8n-nodes-base.microsoftTeams',
       'n8n-nodes-base.microsoftOutlook',
       'n8n-nodes-base.telegram',
@@ -441,7 +457,33 @@ function createSetNode(index: number): WorkflowNode {
   };
 }
 
-function createBitrixNode(index: number): WorkflowNode {
+function createBitrixNode(index: number, enableCommunityNodes: boolean, lower: string): WorkflowNode {
+  const useCommunity = enableCommunityNodes && (
+    lower.includes('community bitrix') ||
+    lower.includes('bitrix community') ||
+    lower.includes('n8n-nodes-bitrix')
+  );
+  if (useCommunity) {
+    return withCredentials({
+      id: 'node-bitrix',
+      name: 'Bitrix24 CRM Action',
+      type: 'n8n-nodes-bitrix.bitrix',
+      version: 1,
+      position: positionFor(index),
+      role: 'main',
+      communityPackage: communityPackageFor('n8n-nodes-bitrix.bitrix'),
+      config: {
+        resource: 'crm.lead',
+        operation: 'create',
+        fields: {
+          TITLE: '={{ $json.title || $json.summary }}',
+          NAME: '={{ $json.name }}',
+          COMMENTS: '={{ $json.summary }}',
+        },
+      },
+    });
+  }
+
   return withCredentials({
     id: 'node-bitrix',
     name: 'Bitrix24 CRM Action',
@@ -459,6 +501,27 @@ function createBitrixNode(index: number): WorkflowNode {
       },
     },
   });
+}
+
+function createConverterDocumentsNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = {
+    id: 'node-converter-documents',
+    name: 'Document Converter',
+    type: '@mazix/n8n-nodes-converter-documents.converterDocuments',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('@mazix/n8n-nodes-converter-documents.converterDocuments'),
+    config: {
+      binaryPropertyName: 'data',
+    },
+  };
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install @mazix/n8n-nodes-converter-documents or replace this node.' };
+  }
+
+  return node;
 }
 
 function createDocxtemplaterNode(index: number, enabled: boolean): WorkflowNode {
