@@ -192,6 +192,42 @@ function buildWorkflowPlan(args: {
     nodes.push(createNotificationNode(nodes.length, args.preferredNotificationChannel, lower));
   }
 
+  if (lower.includes('firecrawl') || lower.includes('scrape') || lower.includes('crawl')) {
+    nodes.push(createFirecrawlNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('puppeteer') || lower.includes('browser automation')) {
+    nodes.push(createPuppeteerNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('chatwoot')) {
+    nodes.push(createChatwootNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('palatine') || lower.includes('transcribe') || lower.includes('audio transcription') || lower.includes('voice message')) {
+    nodes.push(createPalatineSpeechNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('globals') || lower.includes('global constant')) {
+    nodes.push(createGlobalsNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('ocr') || lower.includes('tesseract') || lower.includes('extract text from image')) {
+    nodes.push(createTesseractNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('elevenlabs') || lower.includes('text to speech') || lower.includes('speech synthesis')) {
+    nodes.push(createElevenLabsNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('tavily') || lower.includes('ai search')) {
+    nodes.push(createTavilyNode(nodes.length, args.enableCommunityNodes));
+  }
+
+  if (lower.includes('html to pdf') || lower.includes('pdf converter')) {
+    nodes.push(createHtmlCssToPdfNode(nodes.length, args.enableCommunityNodes));
+  }
+
   if (lower.includes('filter') || lower.includes('validate') || lower.includes('check')) {
     nodes.splice(1, 0, createIfNode(1));
     repositionNodes(nodes);
@@ -425,6 +461,223 @@ function createDocxtemplaterNode(index: number, enabled: boolean): WorkflowNode 
 
   if (!enabled) {
     node.config = { note: 'Community node disabled. Install n8n-nodes-docxtemplater or replace this node.' };
+  }
+
+  return node;
+}
+
+function createFirecrawlNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = withCredentials({
+    id: 'node-firecrawl',
+    name: 'Firecrawl Scraper',
+    type: '@mendable/n8n-nodes-firecrawl.firecrawl',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('@mendable/n8n-nodes-firecrawl.firecrawl'),
+    config: {
+      operation: 'scrape',
+      url: '={{ $json.url }}',
+      options: {
+        pageOptions: {
+          onlyMainContent: true,
+        },
+      },
+    },
+  });
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install @mendable/n8n-nodes-firecrawl or replace this node.' };
+  }
+
+  return node;
+}
+
+function createPuppeteerNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = {
+    id: 'node-puppeteer',
+    name: 'Puppeteer Browser',
+    type: 'n8n-nodes-puppeteer.puppeteer',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('n8n-nodes-puppeteer.puppeteer'),
+    config: {
+      operation: 'getPage',
+      url: '={{ $json.url }}',
+      options: {
+        timeout: 30000,
+        waitUntil: 'networkidle0',
+      },
+    },
+  };
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install n8n-nodes-puppeteer or replace this node.' };
+  }
+
+  return node;
+}
+
+function createChatwootNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = withCredentials({
+    id: 'node-chatwoot',
+    name: 'Chatwoot Integration',
+    type: '@devlikeapro/n8n-nodes-chatwoot.chatwoot',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('@devlikeapro/n8n-nodes-chatwoot.chatwoot'),
+    config: {
+      resource: 'message',
+      operation: 'create',
+      inboxId: '={{ $json.inboxId }}',
+      conversationId: '={{ $json.conversationId }}',
+      messageType: 'outgoing',
+      content: '={{ $json.message || $json.text }}',
+    },
+  });
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install @devlikeapro/n8n-nodes-chatwoot or replace this node.' };
+  }
+
+  return node;
+}
+
+function createPalatineSpeechNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = withCredentials({
+    id: 'node-palatinespeech',
+    name: 'Palatine Speech Transcription',
+    type: 'n8n-nodes-palatine-speech.palatinespeech',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('n8n-nodes-palatine-speech.palatinespeech'),
+    config: {
+      operation: 'transcribe',
+      binaryPropertyName: 'data',
+      diarization: true,
+      language: 'ru',
+    },
+  });
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install n8n-nodes-palatine-speech or replace this node.' };
+  }
+
+  return node;
+}
+
+function createGlobalsNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = {
+    id: 'node-globals',
+    name: 'Globals Constants',
+    type: 'n8n-nodes-globals.globals',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('n8n-nodes-globals.globals'),
+    config: {
+      variables: [
+        {
+          key: 'api_base_url',
+          value: 'https://api.example.com',
+        },
+      ],
+    },
+  };
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install n8n-nodes-globals or replace this node.' };
+  }
+
+  return node;
+}
+
+function createTesseractNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = {
+    id: 'node-tesseractjs',
+    name: 'Tesseract OCR',
+    type: 'n8n-nodes-tesseractjs.tesseractjs',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('n8n-nodes-tesseractjs.tesseractjs'),
+    config: {
+      binaryPropertyName: 'data',
+      language: 'rus+eng',
+    },
+  };
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install n8n-nodes-tesseractjs or replace this node.' };
+  }
+
+  return node;
+}
+
+function createElevenLabsNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = withCredentials({
+    id: 'node-elevenlabs',
+    name: 'ElevenLabs Speech',
+    type: '@elevenlabs/n8n-nodes-elevenlabs.elevenLabs',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('@elevenlabs/n8n-nodes-elevenlabs.elevenLabs'),
+    config: {
+      operation: 'textToSpeech',
+      text: '={{ $json.text || $json.message }}',
+      voiceId: '21m00Tcm4TlvDq8ikWAM',
+    },
+  });
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install @elevenlabs/n8n-nodes-elevenlabs or replace this node.' };
+  }
+
+  return node;
+}
+
+function createTavilyNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = withCredentials({
+    id: 'node-tavily',
+    name: 'Tavily Search',
+    type: '@tavily/n8n-nodes-tavily.tavily',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('@tavily/n8n-nodes-tavily.tavily'),
+    config: {
+      query: '={{ $json.query || $json.text }}',
+      searchDepth: 'advanced',
+    },
+  });
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install @tavily/n8n-nodes-tavily or replace this node.' };
+  }
+
+  return node;
+}
+
+function createHtmlCssToPdfNode(index: number, enabled: boolean): WorkflowNode {
+  const node: WorkflowNode = withCredentials({
+    id: 'node-htmlcsstopdf',
+    name: 'HTML to PDF Converter',
+    type: 'n8n-nodes-htmlcsstopdf.htmlcsstopdf',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    communityPackage: communityPackageFor('n8n-nodes-htmlcsstopdf.htmlcsstopdf'),
+    config: {
+      html: '={{ $json.html || $json.body }}',
+    },
+  });
+
+  if (!enabled) {
+    node.config = { note: 'Community node disabled. Install n8n-nodes-htmlcsstopdf or replace this node.' };
   }
 
   return node;

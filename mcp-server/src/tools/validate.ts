@@ -47,6 +47,56 @@ const NATIVE_ALTERNATIVES: Array<{ pattern: RegExp; nativeType: string; label: s
   { pattern: /slack/i, nativeType: 'n8n-nodes-base.slack', label: 'Slack' },
 ];
 
+const DEPRECATED_COMMUNITY_PACKAGES: Array<{
+  pattern: RegExp;
+  recommendation: string;
+  severity: 'warning' | 'error';
+  message: string;
+}> = [
+  {
+    pattern: /n8n-nodes-evolution-api|n8n-nodes-waha|n8n-nodes-zapi/i,
+    severity: 'warning',
+    message: 'Uses WhatsApp Web automation which has a high account ban risk.',
+    recommendation: 'Use official WhatsApp Business Cloud API node or official green-zone integrations instead.',
+  },
+  {
+    pattern: /n8n-nodes-chatwoot(?!.*@devlikeapro)/i,
+    severity: 'warning',
+    message: 'Outdated unscoped n8n-nodes-chatwoot package (not updated for 3 years).',
+    recommendation: 'Use the official green-zone `@devlikeapro/n8n-nodes-chatwoot` package instead.',
+  },
+  {
+    pattern: /n8n-nodes-firecrawl(?!.*@mendable)/i,
+    severity: 'warning',
+    message: 'Outdated unscoped n8n-nodes-firecrawl package (not updated for over a year).',
+    recommendation: 'Use the official green-zone `@mendable/n8n-nodes-firecrawl` package instead.',
+  },
+  {
+    pattern: /n8n-nodes-elevenlabs(?!.*@elevenlabs)/i,
+    severity: 'warning',
+    message: 'Outdated unscoped n8n-nodes-elevenlabs package (not updated for over a year).',
+    recommendation: 'Use the official green-zone `@elevenlabs/n8n-nodes-elevenlabs` package instead.',
+  },
+  {
+    pattern: /n8n-nodes-tavily(?!.*@tavily)/i,
+    severity: 'warning',
+    message: 'Outdated unscoped n8n-nodes-tavily package (not updated for over a year).',
+    recommendation: 'Use the official green-zone `@tavily/n8n-nodes-tavily` package instead.',
+  },
+  {
+    pattern: /n8n-nodes-apify(?!.*@apify)/i,
+    severity: 'warning',
+    message: 'Outdated unscoped n8n-nodes-apify package (not updated for over a year).',
+    recommendation: 'Use the official green-zone `@apify/n8n-nodes-apify` package instead.',
+  },
+  {
+    pattern: /n8n-nodes-kommo|n8n-nodes-datadog|n8n-nodes-difyai|n8n-nodes-soaprequest|n8n-nodes-avisaapi/i,
+    severity: 'warning',
+    message: 'This community package has not been updated for over a year and may cause compatibility issues.',
+    recommendation: 'Consider writing a custom JS script in a Code node or using native HTTP Request nodes.',
+  },
+];
+
 export async function validateWorkflow(args: ValidateWorkflowArgs): Promise<ValidationResult> {
   const issues: ValidationIssue[] = [];
 
@@ -91,6 +141,7 @@ function validateTypeScript(code: string, issues: ValidationIssue[]): void {
   validateSetVsCode(code, issues);
   validateCommunityNodes(code, issues);
   validateCredentialReferencesInText(code, issues);
+  validateDeprecatedCommunityNodes(code, issues);
 }
 
 function validateWorkflowJson(
@@ -155,6 +206,20 @@ function validateWorkflowJson(
         message: `${node.type} is a community or optional node.`,
         recommendation: communityInstallHintFor(node.type) || `Verify ${communityPackageFor(node.type)} is available in the target n8n instance.`,
       });
+    }
+
+    if (node.type) {
+      for (const rule of DEPRECATED_COMMUNITY_PACKAGES) {
+        if (rule.pattern.test(node.type)) {
+          issues.push({
+            severity: rule.severity,
+            code: 'deprecated-community-node',
+            node: node.name,
+            message: `${node.type}: ${rule.message}`,
+            recommendation: rule.recommendation,
+          });
+        }
+      }
     }
 
     if (schemaValidation === 'known-node-registry') {
@@ -446,4 +511,17 @@ function isErrorHandledDownstream(nodeName: string, workflow: any): boolean {
   }
   
   return foundCheck;
+}
+
+function validateDeprecatedCommunityNodes(code: string, issues: ValidationIssue[]): void {
+  for (const rule of DEPRECATED_COMMUNITY_PACKAGES) {
+    if (rule.pattern.test(code)) {
+      issues.push({
+        severity: rule.severity,
+        code: 'deprecated-community-node',
+        message: `Workflow references a deprecated or high-risk community node/package: ${rule.message}`,
+        recommendation: rule.recommendation,
+      });
+    }
+  }
 }

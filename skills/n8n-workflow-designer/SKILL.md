@@ -227,11 +227,32 @@ Do not place `errorTrigger` in the main workflow and assume it handles that work
   })
   ```
 
-### 7. Support Community Nodes Deliberately
-Community/optional nodes are allowed when they are the idiomatic fit, but mark installation requirements:
-- DOCX generation: `n8n-nodes-docxtemplater.docxtemplater` requires `n8n-nodes-docxtemplater` installed via Community Nodes.
-- Qdrant/RAG: prefer `@n8n/n8n-nodes-langchain.vectorStoreQdrant` or the installed Qdrant community node with `qdrantApi` credentials.
-- If a community node is unavailable in the target instance, fall back only after noting the tradeoff.
+### 7. Support Community Nodes Deliberately & Safety Zones
+Community/optional nodes are allowed when they are the idiomatic fit. Prioritize using audited **Green Zone** community nodes over raw HTTP Requests when they are a better match, but ensure installation requirements are noted:
+- **Firecrawl (Web Scrape/Crawl)**: `@mendable/n8n-nodes-firecrawl.firecrawl` (requires `@mendable/n8n-nodes-firecrawl` community node and `firecrawlApi` credentials).
+- **Puppeteer (Browser Automation)**: `n8n-nodes-puppeteer.puppeteer` (requires `n8n-nodes-puppeteer` community node, does not require credentials).
+- **Chatwoot**: `@devlikeapro/n8n-nodes-chatwoot.chatwoot` (requires `@devlikeapro/n8n-nodes-chatwoot` community node and `chatwootApi` credentials).
+- **Palatine Speech (Transcription)**: `n8n-nodes-palatine-speech.palatinespeech` (requires `n8n-nodes-palatine-speech` community node and `palatineSpeechApi` credentials).
+- **Global Constants**: `n8n-nodes-globals.globals` (requires `n8n-nodes-globals` community node, no credentials).
+- **Tesseract OCR**: `n8n-nodes-tesseractjs.tesseractjs` (requires `n8n-nodes-tesseractjs` community node, no credentials).
+- **ElevenLabs (Text-to-Speech)**: `@elevenlabs/n8n-nodes-elevenlabs.elevenLabs` (requires `@elevenlabs/n8n-nodes-elevenlabs` community node and `elevenLabsApi` credentials).
+- **Tavily (AI Search)**: `@tavily/n8n-nodes-tavily.tavily` (requires `@tavily/n8n-nodes-tavily` community node and `tavilyApi` credentials).
+- **HTML to PDF**: `n8n-nodes-htmlcsstopdf.htmlcsstopdf` (requires `n8n-nodes-htmlcsstopdf` community node and `htmlcsstopdfApi` credentials).
+- **DOCX generation**: `n8n-nodes-docxtemplater.docxtemplater` (requires `n8n-nodes-docxtemplater` installed via Community Nodes).
+- **Qdrant/RAG**: prefer `@n8n/n8n-nodes-langchain.vectorStoreQdrant` or the installed Qdrant community node with `qdrantApi` credentials.
+
+#### Deprecated & High-Risk (Yellow / Red Zone) Restraints:
+- **Avoid Unscoped Outdated Packages**: Do not use `n8n-nodes-chatwoot`, `n8n-nodes-firecrawl`, `n8n-nodes-elevenlabs`, `n8n-nodes-tavily`, or `n8n-nodes-apify`. Instead, use their scoped active equivalents (e.g. `@devlikeapro/n8n-nodes-chatwoot`, `@mendable/n8n-nodes-firecrawl`, etc.).
+- **Avoid WhatsApp Web Automation Node Types**: Strictly avoid `n8n-nodes-evolution-api`, `n8n-nodes-waha`, or `n8n-nodes-zapi` due to high account ban risk. Use official WhatsApp Business Cloud API node/integrations instead.
+- **Avoid Obsolete Packages**: Avoid packages that have not been updated for over a year (e.g., `n8n-nodes-kommo`, `n8n-nodes-datadog`, `n8n-nodes-difyai`, `n8n-nodes-soaprequest`) due to compatibility risks.
+
+#### Reference Audited Templates:
+When designing common flows, reference these validated template designs:
+- **Template 6270**: Advanced AI Agent with Firecrawl web crawling, Tavily research, and memory/tool integration.
+- **Template 5993**: Audio recording transcription using Palatine Speech, summarization/translation with AI, and ElevenLabs speech generation.
+- **Template 5148**: Customer CRM sync with Chatwoot messaging and Bitrix24 deal creation.
+- **Template 4696**: Global Constants configuration for sharing configuration values across nodes.
+- **Template 4722**: HTML-to-PDF template parsing and dynamic document rendering.
 
 ### 8. Validate Idiomatic Patterns
 Run `validate_workflow` on generated TypeScript or compiled JSON. When complete JSON is provided, the MCP server also runs `@n8n/workflow-sdk` validation. Treat warnings as design feedback:
