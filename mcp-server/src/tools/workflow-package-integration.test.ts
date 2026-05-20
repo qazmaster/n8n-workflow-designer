@@ -627,6 +627,88 @@ return filtered;\`
 
     expect(tsResult.warnings.map(w => w.code)).toContain('prefer-native-flow-control');
   });
+
+  it('generates emailSend and emailReadImap nodes when requested', async () => {
+    const code = await designWorkflow({
+      description: 'When a new email is received via imap, send an email confirmation via smtp',
+      workflowName: 'Email Loop',
+      includeErrorHandling: false,
+    });
+
+    expect(code).toContain('n8n-nodes-base.emailReadImap');
+    expect(code).toContain('n8n-nodes-base.emailSend');
+
+    const compiled = await compileWorkflow({ typescriptCode: code });
+    expect(compiled.nodes.map(n => n.type)).toContain('n8n-nodes-base.emailReadImap');
+    expect(compiled.nodes.map(n => n.type)).toContain('n8n-nodes-base.emailSend');
+  });
+
+  it('validates deprecated native nodes (email and start)', async () => {
+    // 1. JSON workflow validation
+    const jsonResult = await validateWorkflow({
+      workflowJson: {
+        name: 'Deprecated Native Nodes Test',
+        nodes: [
+          {
+            id: 'legacy-email',
+            name: 'Old Email Node',
+            type: 'n8n-nodes-base.email',
+            typeVersion: 1,
+            position: [0, 0],
+            parameters: {},
+          },
+          {
+            id: 'legacy-start',
+            name: 'Start Node',
+            type: 'n8n-nodes-base.start',
+            typeVersion: 1,
+            position: [200, 0],
+            parameters: {},
+          }
+        ],
+        connections: {},
+      },
+    });
+
+    const warningCodes = jsonResult.warnings.map(w => w.code);
+    expect(warningCodes).toContain('deprecated-native-node');
+    expect(jsonResult.warnings.filter(w => w.code === 'deprecated-native-node').length).toBe(2);
+
+    // 2. TypeScript workflow validation
+    const tsCode = `
+import { Workflow, node } from '@n8n-as-code/decorators';
+
+@Workflow({
+  name: 'TypeScript Deprecated Nodes Test',
+})
+export class DeprecatedNodesWorkflow {
+  @node({
+    id: 'legacy-email',
+    name: 'Old Email Node',
+    type: 'n8n-nodes-base.email',
+    version: 1,
+    position: [0, 0],
+  })
+  OldEmailNode = {};
+
+  @node({
+    id: 'legacy-start',
+    name: 'Start Node',
+    type: 'n8n-nodes-base.start',
+    version: 1,
+    position: [200, 0],
+  })
+  StartNode = {};
+}
+`;
+    const tsResult = await validateWorkflow({
+      typescriptCode: tsCode,
+    });
+
+    const tsWarningCodes = tsResult.warnings.map(w => w.code);
+    expect(tsWarningCodes).toContain('deprecated-native-node');
+    expect(tsResult.warnings.filter(w => w.code === 'deprecated-native-node').length).toBe(2);
+  });
 });
 
 function jsonResponse(payload: unknown): Response {

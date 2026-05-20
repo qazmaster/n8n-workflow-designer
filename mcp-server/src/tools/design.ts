@@ -184,8 +184,10 @@ function buildWorkflowPlan(args: {
     nodes.push(createGoogleDriveNode(nodes.length));
   }
 
-  if (lower.includes('email') || lower.includes('outlook')) {
+  if (lower.includes('outlook')) {
     nodes.push(createOutlookNode(nodes.length));
+  } else if (lower.includes('email') || lower.includes('smtp')) {
+    nodes.push(createEmailSendNode(nodes.length));
   }
 
   if (lower.includes('teams') || lower.includes('slack') || lower.includes('telegram') || lower.includes('notify') || lower.includes('alert')) {
@@ -347,6 +349,21 @@ function analyzeTrigger(lower: string): WorkflowNode {
     });
   }
 
+  if (lower.includes('imap') || (lower.includes('email') && !lower.includes('outlook') && !lower.includes('gmail') && (lower.includes('incoming') || lower.includes('received') || lower.includes('trigger')))) {
+    return withCredentials({
+      id: 'node-trigger',
+      name: 'Email Read IMAP',
+      type: 'n8n-nodes-base.emailReadImap',
+      version: 2.1,
+      position: [200, 300],
+      role: 'main',
+      config: {
+        onEmailReceived: 'nothing',
+        downloadAttachments: false,
+      },
+    });
+  }
+
   if (lower.includes('email') && (lower.includes('incoming') || lower.includes('received') || lower.includes('trigger'))) {
     return withCredentials({
       id: 'node-trigger',
@@ -358,6 +375,7 @@ function analyzeTrigger(lower: string): WorkflowNode {
       config: { event: 'messageReceived', filters: {} },
     });
   }
+
 
   if (lower.includes('chat') || lower.includes('ai agent')) {
     return {
@@ -798,6 +816,25 @@ function createOutlookNode(index: number): WorkflowNode {
       subject: '={{ $json.subject || "n8n automation update" }}',
       bodyContent: '={{ $json.body || $json.summary }}',
       bodyContentType: 'HTML',
+    },
+  });
+}
+
+function createEmailSendNode(index: number): WorkflowNode {
+  return withCredentials({
+    id: 'node-email-send',
+    name: 'Send Email',
+    type: 'n8n-nodes-base.emailSend',
+    version: 2.1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      fromEmail: 'info@example.com',
+      toEmail: '={{ $json.email }}',
+      subject: '={{ $json.subject || "n8n automation update" }}',
+      html: true,
+      emailFormat: 'html',
+      message: '={{ $json.body || $json.summary }}',
     },
   });
 }
