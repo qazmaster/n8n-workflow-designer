@@ -1116,6 +1116,8 @@ function generateClassName(name: string): string {
 function formatObject(value: unknown, indent: number): string {
   return JSON.stringify(value, null, 4)
     .replace(/"([^"]+)":/g, '$1:')
+    .replace(/\\\\n/g, '\\n')
+    .replace(/\\\\r/g, '\\r')
     .split('\n')
     .map((line, index) => (index === 0 ? line : `${' '.repeat(indent)}${line}`))
     .join('\n');
