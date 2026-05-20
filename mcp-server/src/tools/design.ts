@@ -14,7 +14,7 @@ export interface DesignWorkflowArgs {
   outputFormat?: 'decorator-typescript' | 'sdk-json' | 'both';
 }
 
-type NodeRole = 'main' | 'aiSubNode' | 'error';
+type NodeRole = 'main' | 'aiSubNode' | 'error' | 'note';
 type WorkflowParameters = NonNullable<NodeJSON['parameters']>;
 
 interface WorkflowNode {
@@ -25,6 +25,12 @@ interface WorkflowNode {
   position: [number, number];
   config: WorkflowParameters;
   credentials?: NodeJSON['credentials'];
+  settings?: {
+    continueOnFail?: boolean;
+    retryOnFail?: boolean;
+    maxTries?: number;
+    waitBetweenTries?: number;
+  };
   role: NodeRole;
   aiRole?: 'ai_languageModel' | 'ai_memory' | 'ai_tool' | 'ai_vectorStore';
   communityPackage?: string;
@@ -99,7 +105,7 @@ function buildWorkflowJson(plan: WorkflowPlan): WorkflowJSON {
   };
 }
 
-function toWorkflowJsonNode(workflowNode: WorkflowNode): NodeJSON {
+function toWorkflowJsonNode(workflowNode: WorkflowNode): NodeJSON & { settings?: any } {
   return {
     id: workflowNode.id,
     name: workflowNode.name,
@@ -108,6 +114,7 @@ function toWorkflowJsonNode(workflowNode: WorkflowNode): NodeJSON {
     position: workflowNode.position,
     parameters: workflowNode.config,
     ...(workflowNode.credentials ? { credentials: workflowNode.credentials } : {}),
+    ...(workflowNode.settings ? { settings: workflowNode.settings } : {}),
   };
 }
 
@@ -194,12 +201,87 @@ function buildWorkflowPlan(args: {
     nodes.push(createSetNode(nodes.length));
   }
 
+  applyNodeSettingsHeuristics(nodes, args.description);
+  addStickyNotes(nodes, args.description, args.name);
+
   return {
     id: args.id,
     name: args.name,
     errorWorkflowId: args.errorWorkflowId,
     nodes,
   };
+}
+
+function applyNodeSettingsHeuristics(nodes: WorkflowNode[], description: string): void {
+  const lower = description.toLowerCase();
+  
+  let retryOnFail = false;
+  let maxTries = 3;
+  let retryInterval = 5000;
+  
+  if (lower.includes('retry') || lower.includes('retries') || lower.includes('attempt')) {
+    retryOnFail = true;
+    const retryMatch = lower.match(/(?:retry|attempt|tries)\s*(\d+)\s*times?/i) || lower.match(/(\d+)\s*(?:retry|attempt|tries)/i);
+    if (retryMatch) {
+      maxTries = parseInt(retryMatch[1], 10);
+    }
+    const waitMatch = lower.match(/wait\s*(\d+)\s*(s|sec|second|seconds|ms|millisecond|milliseconds)/i);
+    if (waitMatch) {
+      const num = parseInt(waitMatch[1], 10);
+      const unit = waitMatch[2].toLowerCase();
+      if (unit.startsWith('ms') || unit.startsWith('milli')) {
+        retryInterval = num;
+      } else {
+        retryInterval = num * 1000;
+      }
+    }
+  }
+
+  let continueOnFail = false;
+  if (
+    lower.includes('continue on fail') ||
+    lower.includes('continue on error') ||
+    lower.includes('ignore error') ||
+    lower.includes('ignore errors') ||
+    lower.includes('non-critical') ||
+    lower.includes('optional step')
+  ) {
+    continueOnFail = true;
+  }
+
+  if (!retryOnFail && !continueOnFail) {
+    return;
+  }
+
+  for (const node of nodes) {
+    if (node.id === 'node-trigger' || node.role === 'aiSubNode' || node.role === 'error') {
+      continue;
+    }
+    
+    const isIntegrationNode = [
+      'n8n-nodes-base.bitrix24',
+      'n8n-nodes-base.microsoftTeams',
+      'n8n-nodes-base.microsoftOutlook',
+      'n8n-nodes-base.telegram',
+      'n8n-nodes-base.googleSheets',
+      'n8n-nodes-base.googleDrive',
+      'n8n-nodes-base.httpRequest',
+      'n8n-nodes-docxtemplater.docxtemplater',
+      '@n8n/n8n-nodes-langchain.agent'
+    ].some((type) => node.type.includes(type));
+
+    if (isIntegrationNode) {
+      node.settings = node.settings || {};
+      if (continueOnFail) {
+        node.settings.continueOnFail = true;
+      }
+      if (retryOnFail) {
+        node.settings.retryOnFail = true;
+        node.settings.maxTries = maxTries;
+        node.settings.waitBetweenTries = retryInterval;
+      }
+    }
+  }
 }
 
 function analyzeTrigger(lower: string): WorkflowNode {
@@ -582,11 +664,23 @@ function generateNodeCode(workflowNode: WorkflowNode, propertyName: string): str
   code += `        version: ${workflowNode.version},\n`;
   code += `        position: [${workflowNode.position[0]}, ${workflowNode.position[1]}]`;
   if (workflowNode.credentials) {
-    code += `,\n        credentials: ${formatObject(workflowNode.credentials, 8)}\n`;
-  } else {
-    code += `\n`;
+    code += `,\n        credentials: ${formatObject(workflowNode.credentials, 8)}`;
   }
-  code += `    })\n`;
+  if (workflowNode.settings) {
+    if (workflowNode.settings.continueOnFail) {
+      code += `,\n        onError: 'continueRegularOutput'`;
+    }
+    if (workflowNode.settings.retryOnFail) {
+      code += `,\n        retryOnFail: true`;
+    }
+    if (workflowNode.settings.maxTries !== undefined) {
+      code += `,\n        maxTries: ${workflowNode.settings.maxTries}`;
+    }
+    if (workflowNode.settings.waitBetweenTries !== undefined) {
+      code += `,\n        waitBetweenTries: ${workflowNode.settings.waitBetweenTries}`;
+    }
+  }
+  code += `\n    })\n`;
   code += `    ${propertyName} = ${formatObject(workflowNode.config, 4)};\n`;
   return code;
 }
@@ -743,4 +837,199 @@ function escapeString(str: string): string {
 
 function escapeComment(str: string): string {
   return str.replace(/\n/g, ' ').replace(/\*\//g, '* /');
+}
+
+function addStickyNotes(nodes: WorkflowNode[], description: string, workflowName: string): void {
+  const triggerNode = nodes.find((n) => n.id === 'node-trigger');
+  const triggerName = triggerNode ? triggerNode.name : 'Unknown Trigger';
+  
+  const hasAiNodes = nodes.some((n) => n.type.includes('nodes-langchain') || n.type.includes('agent'));
+  
+  const overviewContent = [
+    `![n8n workflow](https://img.shields.io/badge/n8n-workflow_designer-EA4AAA#full-width)`,
+    ``,
+    `# 📋 Workflow Overview`,
+    `**Name:** ${workflowName}`,
+    ``,
+    `### 💡 Description`,
+    `${description}`,
+    ``,
+    `### 🚀 Trigger`,
+    `Starts automatically via **${triggerName}**.`,
+  ];
+
+  if (hasAiNodes) {
+    overviewContent.push(
+      ``,
+      `### 📺 AI Tutorial Video`,
+      `@[youtube](ZCuL2e4zC_4)`
+    );
+  }
+
+  overviewContent.push(
+    ``,
+    `---`,
+    `*Designed automatically by Antigravity.*`
+  );
+
+  const overviewHeight = hasAiNodes ? 480 : 300;
+
+  nodes.push({
+    id: 'note-workflow-overview',
+    name: 'Workflow Overview Note',
+    type: 'n8n-nodes-base.stickyNote',
+    version: 1,
+    position: [-180, 120],
+    role: 'note',
+    config: {
+      content: overviewContent.join('\n'),
+      height: overviewHeight,
+      width: 340,
+      color: '#f9f0ff', // Soft Lavender
+    },
+  });
+
+  // Add backdrop container behind AI Agent and its subnodes if present
+  const agentNode = nodes.find((n) => n.type === '@n8n/n8n-nodes-langchain.agent');
+  if (agentNode) {
+    const hasQdrant = nodes.some((n) => n.type.includes('vectorStoreQdrant'));
+    const backdropWidth = hasQdrant ? 600 : 380;
+    const backdropHeight = 340;
+    const agentX = agentNode.position[0];
+    
+    nodes.push({
+      id: 'note-ai-backdrop',
+      name: 'AI Agent Container Backdrop',
+      type: 'n8n-nodes-base.stickyNote',
+      version: 1,
+      position: [agentX - 40, 280],
+      role: 'note',
+      config: {
+        content: [
+          `# 🧠 AI Brain Core`,
+          `*This container groups the AI Agent executor with its language model and memory context.*`
+        ].join('\n'),
+        height: backdropHeight,
+        width: backdropWidth,
+        color: '#f6ffed', // Soft Mint Green
+      },
+    });
+  }
+
+  const mainNodes = nodes.filter((n) => n.role === 'main');
+  for (const node of mainNodes) {
+    const purpose = getNodePurpose(node);
+    const customConfig = getNodeCustomConfig(node);
+    
+    const settingsList: string[] = [];
+    if (node.settings?.continueOnFail) {
+      settingsList.push(`- ⚠️ *Ignores errors (Continue on Fail)*`);
+    }
+    if (node.settings?.retryOnFail) {
+      settingsList.push(`- 🔄 *Retries on error (${node.settings.maxTries}x, wait ${node.settings.waitBetweenTries ? node.settings.waitBetweenTries / 1000 : 5}s)*`);
+    }
+    
+    const settingsSection = settingsList.length > 0 
+      ? `\n**⚙️ Error Handling:**\n${settingsList.join('\n')}`
+      : '';
+
+    const content = [
+      `### 📦 ${node.name}`,
+      `*Type:* \`${node.type.split('.').pop()}\``,
+      ``,
+      `**Purpose:**`,
+      purpose,
+      ``,
+      `🔧 **Config to Customize:**`,
+      customConfig,
+      settingsSection
+    ].join('\n');
+
+    const color = getNodeColor(node);
+
+    nodes.push({
+      id: `note-${node.id}`,
+      name: `Note: ${node.name}`,
+      type: 'n8n-nodes-base.stickyNote',
+      version: 1,
+      position: [node.position[0], 120],
+      role: 'note',
+      config: {
+        content,
+        height: 150,
+        width: 240,
+        color,
+      },
+    });
+  }
+}
+
+function getNodePurpose(node: WorkflowNode): string {
+  const type = node.type;
+  if (type.includes('scheduleTrigger')) return 'Triggers the workflow at set intervals (e.g., daily, hourly).';
+  if (type.includes('telegramTrigger')) return 'Listens for incoming messages or updates from a Telegram bot.';
+  if (type.includes('microsoftOutlookTrigger')) return 'Triggers when a new email is received in Outlook.';
+  if (type.includes('chatTrigger')) return 'Provides a chat interface for triggering the workflow manually.';
+  if (type.includes('manualTrigger')) return 'Allows manual execution of the workflow from the n8n UI.';
+  if (type.includes('webhook')) return 'Exposes a URL endpoint to trigger the workflow via HTTP POST/GET.';
+  if (type.includes('set')) return 'Renames, maps, formats, and prepares data fields for downstream nodes.';
+  if (type.includes('bitrix24')) return 'Performs actions inside Bitrix24 (e.g., creating a lead or deal).';
+  if (type.includes('docxtemplater')) return 'Fills a Word DOCX template with dynamic data fields.';
+  if (type.includes('agent')) return 'AI Agent that orchestrates language model requests with tools & memory.';
+  if (type.includes('googleSheets')) return 'Appends, updates, or retrieves rows in a Google Sheet.';
+  if (type.includes('googleDrive')) return 'Uploads files, creates folders, or manages Google Drive assets.';
+  if (type.includes('microsoftOutlook')) return 'Sends outbound emails or updates calendar events via Outlook.';
+  if (type.includes('microsoftTeams')) return 'Sends notifications and chat messages to MS Teams channels.';
+  if (type.includes('telegram')) return 'Sends alert messages to a Telegram chat or channel.';
+  if (type.includes('if')) return 'Validates inputs and splits the execution path based on conditions.';
+  return 'Performs integration or data transformation in the workflow.';
+}
+
+function getNodeCustomConfig(node: WorkflowNode): string {
+  const type = node.type;
+  if (type.includes('Trigger') || type.includes('webhook')) {
+    return 'Configure execution schedules or webhook pathways.';
+  }
+  if (type.includes('set')) {
+    return 'Adjust field mappings or add/remove variables.';
+  }
+  if (type.includes('bitrix24')) {
+    return 'Connect credentials and map CRM lead/deal fields.';
+  }
+  if (type.includes('docxtemplater')) {
+    return 'Provide input binary key and set output file name.';
+  }
+  if (type.includes('agent')) {
+    return 'Refine system prompt and connect tools/memory.';
+  }
+  if (type.includes('googleSheets')) {
+    return 'Set Document ID and worksheet name parameters.';
+  }
+  if (type.includes('googleDrive')) {
+    return 'Set parent folder ID and select upload file binary.';
+  }
+  if (type.includes('microsoftOutlook')) {
+    return 'Set recipient email address, subject, and body template.';
+  }
+  if (type.includes('microsoftTeams') || type.includes('telegram')) {
+    return 'Specify the target Channel/Chat ID or webhook URL.';
+  }
+  if (type.includes('if')) {
+    return 'Define the conditions to validate input data.';
+  }
+  return 'Provide API parameters and connect credentials.';
+}
+
+function getNodeColor(node: WorkflowNode): string {
+  const type = node.type;
+  if (type.includes('Trigger') || type.includes('webhook')) {
+    return '#fff7e6'; // Pastel Yellow
+  }
+  if (type.includes('set') || type.includes('if')) {
+    return '#f5f5f5'; // Sleek Light Gray
+  }
+  if (type.includes('agent') || type.includes('nodes-langchain')) {
+    return '#f6ffed'; // Soft Mint Green
+  }
+  return '#e6f7ff'; // Clean Ice Blue
 }

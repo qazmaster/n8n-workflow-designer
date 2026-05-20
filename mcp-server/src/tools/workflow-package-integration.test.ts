@@ -282,6 +282,216 @@ describe('n8n package integration', () => {
     expect(result.warnings.map((issue) => issue.code)).toContain('registry-missing-required-parameter');
     expect(result.info.map((issue) => issue.code)).toContain('schema-registry-partial');
   });
+
+  it('automatically configures retry and continueOnFail settings from description heuristics', async () => {
+    const code = await designWorkflow({
+      description: 'When webhook receives a lead, create a Bitrix24 lead, retry 4 times and wait 3s on error, ignore errors on non-critical Telegram alerts',
+      workflowName: 'Lead Intake with Settings',
+      includeErrorHandling: false,
+    });
+
+    const compiled = await compileWorkflow({ typescriptCode: code });
+    const bitrix = compiled.nodes.find((n) => n.type.includes('bitrix24'));
+    const telegram = compiled.nodes.find((n) => n.type.includes('telegram'));
+
+    expect((bitrix as any)?.settings).toEqual({
+      continueOnFail: true,
+      retryOnFail: true,
+      maxTries: 4,
+      waitBetweenTries: 3000,
+    });
+    expect((telegram as any)?.settings).toEqual({
+      continueOnFail: true,
+      retryOnFail: true,
+      maxTries: 4,
+      waitBetweenTries: 3000,
+    });
+  });
+
+  it('validates conflicting node settings (continueOnFail and retryOnFail)', async () => {
+    const result = await validateWorkflow({
+      workflowJson: {
+        name: 'Conflicting Settings',
+        nodes: [
+          {
+            id: 'http-node',
+            name: 'HTTP Request',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4,
+            position: [0, 0],
+            parameters: {},
+            settings: {
+              continueOnFail: true,
+              retryOnFail: true,
+            },
+          },
+        ],
+        connections: {},
+      },
+    });
+
+    expect(result.warnings.map((issue) => issue.code)).toContain('registry-conflicting-error-settings');
+  });
+
+  it('validates unsafe continueOnFail (green-but-broken trap)', async () => {
+    // 1. Without downstream check
+    const result1 = await validateWorkflow({
+      workflowJson: {
+        name: 'Unsafe ContinueOnFail',
+        nodes: [
+          {
+            id: 'http-node',
+            name: 'HTTP Request',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4,
+            position: [0, 0],
+            parameters: {},
+            settings: {
+              continueOnFail: true,
+            },
+          },
+          {
+            id: 'set-node',
+            name: 'Set Data',
+            type: 'n8n-nodes-base.set',
+            typeVersion: 1,
+            position: [200, 0],
+            parameters: {},
+          },
+        ],
+        connections: {
+          'HTTP Request': {
+            main: [[{ node: 'Set Data', type: 'main', index: 0 }]],
+          },
+        },
+      },
+    });
+
+    expect(result1.warnings.map((issue) => issue.code)).toContain('registry-unsafe-continue-on-fail');
+
+    // 2. With downstream check (IF node referencing HTTP Request error)
+    const result2 = await validateWorkflow({
+      workflowJson: {
+        name: 'Safe ContinueOnFail',
+        nodes: [
+          {
+            id: 'http-node',
+            name: 'HTTP Request',
+            type: 'n8n-nodes-base.httpRequest',
+            typeVersion: 4,
+            position: [0, 0],
+            parameters: {},
+            settings: {
+              continueOnFail: true,
+            },
+          },
+          {
+            id: 'if-node',
+            name: 'Check Error',
+            type: 'n8n-nodes-base.if',
+            typeVersion: 1,
+            position: [200, 0],
+            parameters: {
+              conditions: {
+                options: {
+                  leftValue: '={{ $json.error }}',
+                },
+              },
+            },
+          },
+        ],
+        connections: {
+          'HTTP Request': {
+            main: [[{ node: 'Check Error', type: 'main', index: 0 }]],
+          },
+        },
+      },
+    });
+
+    expect(result2.warnings.map((issue) => issue.code)).not.toContain('registry-unsafe-continue-on-fail');
+  });
+
+  it('automatically adds a global overview sticky note and individual node sticky notes with clean layouts', async () => {
+    const json = await designWorkflow({
+      description: 'Manual trigger: prepare data and log it',
+      workflowName: 'Test Sticky Notes Workflow',
+      outputFormat: 'sdk-json',
+      includeErrorHandling: false,
+    });
+
+    const workflow = JSON.parse(json) as {
+      name: string;
+      nodes: Array<{
+        name: string;
+        type: string;
+        position: [number, number];
+        parameters?: {
+          content?: string;
+          width?: number;
+          height?: number;
+          color?: string | number;
+        };
+      }>;
+    };
+
+    const stickyNotes = workflow.nodes.filter((n) => n.type === 'n8n-nodes-base.stickyNote');
+    expect(stickyNotes.length).toBeGreaterThan(1);
+
+    const overviewNote = stickyNotes.find((n) => n.name === 'Workflow Overview Note');
+    expect(overviewNote).toBeDefined();
+    expect(overviewNote?.position).toEqual([-180, 120]);
+    expect(overviewNote?.parameters?.content).toContain('# 📋 Workflow Overview');
+    expect(overviewNote?.parameters?.content).toContain('https://img.shields.io/badge/n8n-workflow_designer-EA4AAA#full-width');
+    expect(overviewNote?.parameters?.width).toBe(340);
+    expect(overviewNote?.parameters?.height).toBe(300);
+    expect(overviewNote?.parameters?.color).toBe('#f9f0ff');
+
+    const triggerNote = stickyNotes.find((n) => n.name === 'Note: Manual Trigger');
+    expect(triggerNote).toBeDefined();
+    expect(triggerNote?.position).toEqual([200, 120]);
+    expect(triggerNote?.parameters?.content).toContain('### 📦 Manual Trigger');
+    expect(triggerNote?.parameters?.color).toBe('#fff7e6');
+  });
+
+  it('automatically adds YouTube embeds and AI backdrop container for AI Agent workflows', async () => {
+    const json = await designWorkflow({
+      description: 'Trigger when chat message received, use AI Agent with Memory',
+      workflowName: 'Test AI Agent Sticky Notes Workflow',
+      outputFormat: 'sdk-json',
+      includeErrorHandling: false,
+    });
+
+    const workflow = JSON.parse(json) as {
+      name: string;
+      nodes: Array<{
+        name: string;
+        type: string;
+        position: [number, number];
+        parameters?: {
+          content?: string;
+          width?: number;
+          height?: number;
+          color?: string | number;
+        };
+      }>;
+    };
+
+    const stickyNotes = workflow.nodes.filter((n) => n.type === 'n8n-nodes-base.stickyNote');
+    
+    // Overview note should have video embed and height = 480
+    const overviewNote = stickyNotes.find((n) => n.name === 'Workflow Overview Note');
+    expect(overviewNote).toBeDefined();
+    expect(overviewNote?.parameters?.content).toContain('@[youtube](ZCuL2e4zC_4)');
+    expect(overviewNote?.parameters?.height).toBe(480);
+
+    // AI Agent backdrop container note should exist
+    const backdropNote = stickyNotes.find((n) => n.name === 'AI Agent Container Backdrop');
+    expect(backdropNote).toBeDefined();
+    expect(backdropNote?.parameters?.content).toContain('# 🧠 AI Brain Core');
+    expect(backdropNote?.parameters?.color).toBe('#f6ffed');
+    expect(backdropNote?.parameters?.width).toBe(380);
+    expect(backdropNote?.parameters?.height).toBe(340);
+  });
 });
 
 function jsonResponse(payload: unknown): Response {

@@ -151,44 +151,20 @@ Default workflow sequence:
 | **Community** | `n8n-nodes-docxtemplater.docxtemplater` | DOCX generation from templates |
 | | `@n8n/n8n-nodes-langchain.vectorStoreQdrant` | Qdrant vector retrieval for RAG workflows |
 
-## Idiomatic n8n Design Guide
+## General n8n Design Guide
 
-Use these rules before generating TypeScript or JSON. The companion MCP server validates against the same patterns.
+Use these guidelines before generating TypeScript or JSON:
 
 ### 1. Prefer Native Nodes Over `httpRequest`
-
-Use `n8n-nodes-base.httpRequest` only when no maintained native or community node exists. Prefer native nodes for Bitrix24, Microsoft Teams, Telegram, Outlook, Google Sheets/Drive, Slack, and AI chat/agent work. External APIs without an n8n node may use `httpRequest`, but document why no native/community node applies.
+Use native nodes when they are available and supported in the instance. External APIs without a native node may use `httpRequest`.
 
 ### 2. Use Proper Credential References
+Authenticated nodes must include a `credentials` object with placeholder IDs/names that match n8n credential types. Never hardcode API keys, tokens, or credentials in URLs or headers.
 
-Authenticated nodes must include a `credentials` object with placeholder IDs/names that match n8n credential types. Never hardcode API keys, webhook tokens, OAuth bearer tokens, or bot tokens in URLs or headers.
-
-```typescript
-@node({
-    name: 'Notify Teams',
-    type: 'n8n-nodes-base.microsoftTeams',
-    credentials: {
-        microsoftTeamsOAuth2Api: {
-            id: 'MICROSOFT_TEAMS_CREDENTIAL_ID',
-            name: 'Microsoft Teams account'
-        }
-    }
-})
-NotifyTeams = {
-    resource: 'chatMessage',
-    operation: 'create',
-    teamId: '={{ $env.TEAMS_TEAM_ID }}',
-    channelId: '={{ $env.TEAMS_CHANNEL_ID }}',
-    message: '=Lead created: {{ $json.deal_title }}'
-};
-```
-
-### 3. Generate `Set` Nodes for Simple Transforms
-
+### 3. Prefer Set Nodes for Simple Transforms
 Use `n8n-nodes-base.set` for field mapping, renaming, static defaults, formatting expressions, and simple extraction. Use `Code` only for complex JavaScript: loops across `$input.all()`, grouping, sorting, algorithmic transforms, binary manipulation, or custom libraries.
 
 ### 4. Use the AI Agent Pattern With Sub-Nodes
-
 AI workflows should use a main `@n8n/n8n-nodes-langchain.agent` node and sub-nodes for model, memory, tools, and vector stores. Do not call OpenAI/OpenRouter with raw HTTP for normal chat/agent behavior.
 
 ```typescript
@@ -218,7 +194,6 @@ defineRouting() {
 ```
 
 ### 5. Include Error Workflow References
-
 Production workflows should reference a separate error workflow in settings. The error workflow contains `n8n-nodes-base.errorTrigger` followed by a native notification node.
 
 ```typescript
@@ -233,18 +208,33 @@ export class LeadRouterWorkflow {}
 
 Do not place `errorTrigger` in the main workflow and assume it handles that workflow's own failures; n8n error triggers run as separate workflows.
 
-### 6. Support Community Nodes Deliberately
+### 6. Node-Level Settings (Errors & Retries)
+- **Retry on Failure (`retryOnFail`):** Use this for transient errors, rate limits, or network glitches on external integration nodes (e.g., HTTP Request, Bitrix24, Google, etc.).
+- **Continue on Fail (`continueOnFail`):** Use for non-critical steps where a failure should not stop the entire execution. Always follow nodes with `continueOnFail` with a downstream check or conditional block to handle error shapes and prevent the "green-but-broken" trap.
+- **Do Not Combine:** Avoid setting both `continueOnFail: true` and `retryOnFail: true` on the same node, as this can lead to unexpected behavior.
+- **Syntax in Decorator:**
+  ```typescript
+  @node({
+      id: 'example-node',
+      name: 'Example',
+      type: 'n8n-nodes-base.httpRequest',
+      version: 1,
+      position: [200, 300],
+      onError: 'continueRegularOutput',
+      retryOnFail: true,
+      maxTries: 3,
+      waitBetweenTries: 5000
+  })
+  ```
 
+### 7. Support Community Nodes Deliberately
 Community/optional nodes are allowed when they are the idiomatic fit, but mark installation requirements:
-
 - DOCX generation: `n8n-nodes-docxtemplater.docxtemplater` requires `n8n-nodes-docxtemplater` installed via Community Nodes.
 - Qdrant/RAG: prefer `@n8n/n8n-nodes-langchain.vectorStoreQdrant` or the installed Qdrant community node with `qdrantApi` credentials.
 - If a community node is unavailable in the target instance, fall back only after noting the tradeoff.
 
-### 7. Validate Idiomatic Patterns
-
+### 8. Validate Idiomatic Patterns
 Run `validate_workflow` on generated TypeScript or compiled JSON. When complete JSON is provided, the MCP server also runs `@n8n/workflow-sdk` validation. Treat warnings as design feedback:
-
 - `prefer-native-node` — raw `httpRequest` appears to call an integration with a native node.
 - `missing-credential-reference` — authenticated node lacks credential placeholders.
 - `prefer-set-node` — `Code` appears to do simple field mapping.
@@ -253,8 +243,20 @@ Run `validate_workflow` on generated TypeScript or compiled JSON. When complete 
 - `community-node-requirement` — target instance must have the optional/community node installed.
 - `sdk-*` — official SDK validation found a structural issue in complete workflow JSON.
 
-### Step 3: Generate Workflow Output
+### 9. Advanced Sticky Notes (Notes Sticker) & Premium Layouts
+- **Curated Hex Palette:** Always assign modern theme-aware hex colors for sticky notes instead of standard integers:
+  - Trigger nodes: `#fff7e6` (Pastel Yellow)
+  - Logic/Set/If nodes: `#f5f5f5` (Sleek Light Gray)
+  - AI/LangChain nodes: `#f6ffed` (Soft Mint Green)
+  - Integrations: `#e6f7ff` (Clean Ice Blue)
+  - Overview Note: `#f9f0ff` (Soft Lavender)
+- **Dynamic Banner Headers:** Embed Shields.io status badges at the top of the Overview note to act as full-width headers.
+- **Playable Video Embeds:** Embed official YouTube tutorial guides (e.g. `@[youtube](ZCuL2e4zC_4)`) inside the Overview note for workflows utilizing AI/LangChain nodes. Scale Overview height to `480px` to fit the player.
+- **Visual Grouping Backdrops:** Generate large background container notes (`AI Agent Container Backdrop` colored in `#f6ffed`) behind AI Agent clusters. Position the backdrop at `Y = 280` with a `10px` gap below node-specific sticky notes to prevent coordinate collisions.
 
+## Workflow Generation/Lifecycle Steps
+
+### Step 3: Generate Workflow Output
 Prefer decorator TypeScript for reviewable workflows. Use `outputFormat: 'sdk-json'` only when the caller needs JSON directly, and `outputFormat: 'both'` when comparing TypeScript and SDK-normalized JSON.
 
 ```json
@@ -266,7 +268,6 @@ Prefer decorator TypeScript for reviewable workflows. Use `outputFormat: 'sdk-js
 ```
 
 ### Step 4: Generate TypeScript Code
-
 Use the decorator pattern:
 
 ```typescript
@@ -310,7 +311,6 @@ export class MyWorkflow {
 ```
 
 ### Step 5: Compile to JSON
-
 ```typescript
 import { TypeScriptParser, WorkflowBuilder } from '@n8n-as-code/transformer';
 
@@ -322,7 +322,6 @@ const workflowJson = builder.build(ast);
 ```
 
 ### Step 6: Deploy
-
 ```json
 {
     "workflowJson": { "name": "Workflow Name", "nodes": [], "connections": {} },
@@ -336,7 +335,6 @@ Deploy strips read-only fields and filters settings before sending data to n8n. 
 ## Design Patterns
 
 ### Pattern 1: Webhook → Guard → Action
-
 ```typescript
 @workflow({ id: 'webhook-guard', name: 'Secure Webhook Handler' })
 export class SecureWebhookWorkflow {
@@ -385,7 +383,6 @@ export class SecureWebhookWorkflow {
 ```
 
 ### Pattern 2: Schedule → Fetch → AI → Notify
-
 ```typescript
 @workflow({ id: 'scheduled-ai', name: 'Scheduled AI Report' })
 export class ScheduledAiWorkflow {
@@ -433,7 +430,6 @@ export class ScheduledAiWorkflow {
 ```
 
 ### Pattern 3: AI Agent with Tools
-
 ```typescript
 @workflow({ id: 'ai-agent', name: 'AI Agent with Tools' })
 export class AiAgentWorkflow {
@@ -543,7 +539,6 @@ Operational rule: reference and validation tools from `czlonkowski/n8n-mcp` are 
 ## Examples
 
 ### Example 1: Bitrix24 Lead Creation
-
 ```typescript
 @workflow({ id: 'bitrix-lead', name: 'Create Bitrix24 Lead' })
 export class BitrixLeadWorkflow {
@@ -582,7 +577,6 @@ export class BitrixLeadWorkflow {
 ```
 
 ### Example 2: Document OCR Pipeline
-
 ```typescript
 @workflow({ id: 'ocr-pipeline', name: 'Document OCR' })
 export class OcrWorkflow {

@@ -20,7 +20,35 @@ export async function compileWorkflow(args: CompileWorkflowArgs): Promise<N8nWor
     const parser = new TypeScriptParser();
     const builder = new WorkflowBuilder();
     const ast = await parser.parseFile(filePath);
-    return builder.build(ast);
+    const workflow = builder.build(ast);
+
+    if (workflow.nodes) {
+      for (const node of workflow.nodes) {
+        const settings: Record<string, any> = (node as any).settings || {};
+        if ((node as any).onError) {
+          if ((node as any).onError === 'continueRegularOutput' || (node as any).onError === 'continueErrorOutput') {
+            settings.continueOnFail = true;
+          }
+        }
+        if ((node as any).retryOnFail !== undefined) {
+          settings.retryOnFail = (node as any).retryOnFail;
+          delete (node as any).retryOnFail;
+        }
+        if ((node as any).maxTries !== undefined) {
+          settings.maxTries = (node as any).maxTries;
+          delete (node as any).maxTries;
+        }
+        if ((node as any).waitBetweenTries !== undefined) {
+          settings.waitBetweenTries = (node as any).waitBetweenTries;
+          delete (node as any).waitBetweenTries;
+        }
+        if (Object.keys(settings).length > 0) {
+          (node as any).settings = settings;
+        }
+      }
+    }
+
+    return workflow;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to compile workflow TypeScript with @n8n-as-code/transformer: ${message}`);

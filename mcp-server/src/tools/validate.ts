@@ -11,6 +11,7 @@ import {
   NODE_REGISTRY,
   validateNodeAgainstRegistry,
 } from './node-registry.js';
+import { compileWorkflow } from './compile.js';
 
 export interface ValidateWorkflowArgs {
   typescriptCode?: string;
@@ -59,13 +60,25 @@ export async function validateWorkflow(args: ValidateWorkflowArgs): Promise<Vali
     return buildResult(issues);
   }
 
+  let workflowJson = args.workflowJson;
+
   if (args.typescriptCode) {
     validateTypeScript(args.typescriptCode, issues);
+    try {
+      workflowJson = await compileWorkflow({ typescriptCode: args.typescriptCode }) as any;
+    } catch (e) {
+      issues.push({
+        severity: 'info',
+        code: 'typescript-compilation-failed-for-validation',
+        message: 'Could not compile TypeScript to JSON for deep flow checks: ' + (e instanceof Error ? e.message : String(e)),
+        recommendation: 'Fix any TypeScript errors in the code so full validation can run.',
+      });
+    }
   }
 
-  if (args.workflowJson) {
-    validateWithWorkflowSdk(args.workflowJson, issues);
-    validateWorkflowJson(args.workflowJson, issues, args.schemaValidation || 'known-node-registry');
+  if (workflowJson) {
+    validateWithWorkflowSdk(workflowJson, issues);
+    validateWorkflowJson(workflowJson, issues, args.schemaValidation || 'known-node-registry');
   }
 
   return buildResult(issues);
@@ -92,6 +105,27 @@ function validateWorkflowJson(
 
     if (node.type === 'n8n-nodes-base.httpRequest') {
       addHttpRequestAlternativeIssue(serialized, issues, node.name);
+    }
+
+    const settings = (node as any).settings || {};
+    if (settings.continueOnFail && settings.retryOnFail) {
+      issues.push({
+        severity: 'warning',
+        code: 'registry-conflicting-error-settings',
+        node: node.name,
+        message: 'Node has both continueOnFail and retryOnFail settings enabled.',
+        recommendation: 'Choose either continueOnFail (to ignore errors and proceed) or retryOnFail (to try again on error), but not both, as they can cause conflicting behavior.',
+      });
+    }
+
+    if (settings.continueOnFail && !isErrorHandledDownstream(node.name || '', workflow)) {
+      issues.push({
+        severity: 'warning',
+        code: 'registry-unsafe-continue-on-fail',
+        node: node.name,
+        message: 'continueOnFail is enabled, but the error is not handled or checked downstream.',
+        recommendation: 'Add an IF node downstream to check for error (e.g. {{ $json.error }}) to avoid the "green-but-broken" trap where failures go unnoticed.',
+      });
     }
 
     if (node.type) {
@@ -353,4 +387,63 @@ function buildResult(issues: ValidationIssue[]): ValidationResult {
     info,
     summary: `Idiomatic validation: ${errors.length} error(s), ${warnings.length} warning(s), ${info.length} info item(s). Score: ${score}/100.`,
   };
+}
+
+function isErrorHandledDownstream(nodeName: string, workflow: any): boolean {
+  if (!nodeName) {
+    return false;
+  }
+  const connections = workflow.connections || {};
+  const nodes = workflow.nodes || [];
+  
+  const visited = new Set<string>();
+  const queue: string[] = [];
+  
+  const nodeConnections = connections[nodeName]?.main;
+  if (nodeConnections) {
+    for (const branch of nodeConnections) {
+      for (const conn of branch) {
+        if (conn?.node) {
+          queue.push(conn.node);
+        }
+      }
+    }
+  }
+  
+  let foundCheck = false;
+  while (queue.length > 0) {
+    const currentName = queue.shift()!;
+    if (visited.has(currentName)) {
+      continue;
+    }
+    visited.add(currentName);
+    
+    const currentNode = nodes.find((n: any) => n.name === currentName);
+    if (currentNode) {
+      const serialized = JSON.stringify(currentNode.parameters || {});
+      const escapedNodeName = nodeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const errorPattern = new RegExp('(?:\\$json|\\$\\([\'"]' + escapedNodeName + '[\'"]\\)\\.item\\.json)(?:\\.error|\\[[\'"]?error[\'"]?\\])', 'i');
+      
+      if (
+        errorPattern.test(serialized) ||
+        (serialized.includes('"error"') && /check|validate|if|filter/i.test(currentNode.type || ''))
+      ) {
+        foundCheck = true;
+        break;
+      }
+    }
+    
+    const nextConns = connections[currentName]?.main;
+    if (nextConns) {
+      for (const branch of nextConns) {
+        for (const conn of branch) {
+          if (conn?.node && !visited.has(conn.node)) {
+            queue.push(conn.node);
+          }
+        }
+      }
+    }
+  }
+  
+  return foundCheck;
 }
