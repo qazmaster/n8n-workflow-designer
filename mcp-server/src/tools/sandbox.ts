@@ -164,6 +164,8 @@ export async function prepareExecutionSuite(args: PrepareExecutionSuiteArgs): Pr
         testCaseId: tc.id,
         nodeName: finalNodeName || 'Prepare Data',
         expectedOutput: tc.expected.finalOutput,
+        assertions: tc.expected.assertions,
+        errorExpected: tc.expected.errorExpected,
       });
     }
 

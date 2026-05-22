@@ -1152,7 +1152,12 @@ export class TSWorkflow {
             id: 'tc1',
             description: 'Verify lead intake',
             input: { name: 'Alice' },
-            expected: { pathExists: ['Webhook', 'Bitrix24 CRM'], finalOutput: { ok: true } }
+            expected: {
+              pathExists: ['Webhook', 'Bitrix24 CRM'],
+              finalOutput: { ok: true },
+              assertions: [{ field: 'status', operator: 'equals', value: 'active' }],
+              errorExpected: false
+            }
           }
         ]
       };
@@ -1168,6 +1173,8 @@ export class TSWorkflow {
       expect(suite.testCases[0].id).toBe('tc1');
       expect(suite.testCases[0].recommendedMcpArguments.data).toEqual({ name: 'Alice' });
       expect(suite.testCases[0].assertions[0].nodeName).toBe('Bitrix24 CRM');
+      expect(suite.testCases[0].assertions[0].assertions).toEqual([{ field: 'status', operator: 'equals', value: 'active' }]);
+      expect(suite.testCases[0].assertions[0].errorExpected).toBe(false);
     });
 
     it('prepare_repair_patch diagnoses expression errors and auto-detects fix', async () => {
