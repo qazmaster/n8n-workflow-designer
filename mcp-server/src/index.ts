@@ -53,6 +53,12 @@ import {
   prepareCleanupPlan,
   applyRepairPatch,
   prepareRetestPlan,
+  evaluateRepairScope,
+  prepareRefactorPlan,
+  prepareRedesignPlan,
+  generateWorkflowVariant,
+  compareWorkflowVariants,
+  prepareMigrationPlan,
   type PrepareSandboxDeployPlanArgs,
   type PrepareExecutionSuiteArgs,
   type PrepareRepairPatchArgs,
@@ -60,6 +66,12 @@ import {
   type PrepareCleanupPlanArgs,
   type ApplyRepairPatchArgs,
   type PrepareRetestPlanArgs,
+  type EvaluateRepairScopeArgs,
+  type PrepareRefactorPlanArgs,
+  type PrepareRedesignPlanArgs,
+  type GenerateWorkflowVariantArgs,
+  type CompareWorkflowVariantsArgs,
+  type PrepareMigrationPlanArgs,
 } from './tools/sandbox.js';
 
 const DEPLOY_MODE = (process.env.N8N_DESIGNER_DEPLOY_MODE || 'standalone').toLowerCase();
@@ -657,6 +669,150 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['sandboxWorkflowId', 'workflowJson'],
         },
       },
+      {
+        name: 'evaluate_repair_scope',
+        description: 'Evaluate structural scope of repairs: patch (Level 1), refactor (Level 2), or redesign (Level 3).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Current workflow JSON',
+            },
+            executionResult: {
+              type: 'object',
+              description: 'Execution result object containing runData or errors',
+            },
+            failedAttempts: {
+              type: 'number',
+              description: 'Number of failed attempts on current root cause',
+            },
+            diagnosis: {
+              type: 'object',
+              description: 'Optional structured diagnosis from prepare_repair_patch',
+            },
+          },
+          required: ['workflowJson', 'executionResult', 'failedAttempts'],
+        },
+      },
+      {
+        name: 'prepare_refactor_plan',
+        description: 'Prepare a structural refactoring plan to improve robustness or insert validation nodes.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Current workflow JSON',
+            },
+            reason: {
+              type: 'string',
+              description: 'Reason describing why refactoring is needed',
+            },
+          },
+          required: ['workflowJson', 'reason'],
+        },
+      },
+      {
+        name: 'prepare_redesign_plan',
+        description: 'Prepare an architectural redesign proposal when escalation triggers are hit.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Current workflow JSON',
+            },
+            reason: {
+              type: 'string',
+              description: 'Escalation or redesign reason',
+            },
+            contract: {
+              type: 'object',
+              description: 'Test contract JSON (optional)',
+            },
+          },
+          required: ['workflowJson', 'reason'],
+        },
+      },
+      {
+        name: 'generate_workflow_variant',
+        description: 'Generate a new sandbox workflow variant applying structural modifications.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Base workflow JSON',
+            },
+            variantName: {
+              type: 'string',
+              description: 'Name of the new workflow variant',
+            },
+            modifications: {
+              type: 'array',
+              description: 'List of node/trigger modifications to apply',
+              items: {
+                type: 'object',
+                properties: {
+                  type: {
+                    type: 'string',
+                    enum: ['replace_node', 'add_node', 'split_workflow', 'change_trigger'],
+                  },
+                  targetNode: { type: 'string' },
+                  newNode: { type: 'object' },
+                },
+                required: ['type'],
+              },
+            },
+          },
+          required: ['workflowJson', 'variantName', 'modifications'],
+        },
+      },
+      {
+        name: 'compare_workflow_variants',
+        description: 'Compare two workflow configurations and list the differences.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJsonV1: {
+              type: 'object',
+              description: 'Original workflow JSON',
+            },
+            workflowJsonV2: {
+              type: 'object',
+              description: 'Redesigned workflow JSON',
+            },
+          },
+          required: ['workflowJsonV1', 'workflowJsonV2'],
+        },
+      },
+      {
+        name: 'prepare_migration_plan',
+        description: 'Prepare a production deployment and rollback migration plan for redesigned workflows.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            productionWorkflowId: {
+              type: 'string',
+              description: 'Production workflow ID to update (optional)',
+            },
+            workflowJsonV1: {
+              type: 'object',
+              description: 'Original workflow JSON',
+            },
+            workflowJsonV2: {
+              type: 'object',
+              description: 'Redesigned workflow JSON',
+            },
+            rollbackSupported: {
+              type: 'boolean',
+              description: 'Whether rollback is supported (default: true)',
+            },
+          },
+          required: ['workflowJsonV1', 'workflowJsonV2'],
+        },
+      },
     ],
   };
 });
@@ -1107,6 +1263,78 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'evaluate_repair_scope': {
+        const result = await evaluateRepairScope(parseEvaluateRepairScopeArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_refactor_plan': {
+        const result = await prepareRefactorPlan(parsePrepareRefactorPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_redesign_plan': {
+        const result = await prepareRedesignPlan(parsePrepareRedesignPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'generate_workflow_variant': {
+        const result = await generateWorkflowVariant(parseGenerateWorkflowVariantArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'compare_workflow_variants': {
+        const result = await compareWorkflowVariants(parseCompareWorkflowVariantsArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_migration_plan': {
+        const result = await prepareMigrationPlan(parsePrepareMigrationPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
 
       default:
         throw new McpError(
@@ -1456,6 +1684,103 @@ function parsePrepareRetestPlanArgs(args: unknown): PrepareRetestPlanArgs {
   return {
     sandboxWorkflowId: requiredString(input.sandboxWorkflowId, 'sandboxWorkflowId'),
     workflowJson: workflowJson as any,
+  };
+}
+
+
+function parseEvaluateRepairScopeArgs(args: unknown): EvaluateRepairScopeArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  const failedAttempts = input.failedAttempts;
+  if (typeof failedAttempts !== 'number' || !Number.isFinite(failedAttempts)) {
+    throw new ArgumentError('failedAttempts must be a finite number.');
+  }
+
+  return {
+    workflowJson: workflowJson as any,
+    executionResult: input.executionResult,
+    failedAttempts,
+    diagnosis: optionalRecord(input.diagnosis, 'diagnosis'),
+  };
+}
+
+function parsePrepareRefactorPlanArgs(args: unknown): PrepareRefactorPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  return {
+    workflowJson: workflowJson as any,
+    reason: requiredString(input.reason, 'reason'),
+  };
+}
+
+function parsePrepareRedesignPlanArgs(args: unknown): PrepareRedesignPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  return {
+    workflowJson: workflowJson as any,
+    reason: requiredString(input.reason, 'reason'),
+    contract: optionalRecord(input.contract, 'contract'),
+  };
+}
+
+function parseGenerateWorkflowVariantArgs(args: unknown): GenerateWorkflowVariantArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  const modifications = input.modifications;
+  if (!Array.isArray(modifications)) {
+    throw new ArgumentError('modifications must be an array.');
+  }
+
+  for (const [index, mod] of modifications.entries()) {
+    if (!isObjectRecord(mod)) {
+      throw new ArgumentError(`modifications[${index}] must be an object.`);
+    }
+    const type = mod.type;
+    if (typeof type !== 'string' || !['replace_node', 'add_node', 'split_workflow', 'change_trigger'].includes(type)) {
+      throw new ArgumentError(`modifications[${index}].type must be a valid modification type.`);
+    }
+  }
+
+  return {
+    workflowJson: workflowJson as any,
+    variantName: requiredString(input.variantName, 'variantName'),
+    modifications: modifications as any,
+  };
+}
+
+function parseCompareWorkflowVariantsArgs(args: unknown): CompareWorkflowVariantsArgs {
+  const input = objectArgs(args);
+  const workflowJsonV1 = input.workflowJsonV1;
+  const workflowJsonV2 = input.workflowJsonV2;
+  assertWorkflowJsonShape(workflowJsonV1, 'workflowJsonV1');
+  assertWorkflowJsonShape(workflowJsonV2, 'workflowJsonV2');
+
+  return {
+    workflowJsonV1: workflowJsonV1 as any,
+    workflowJsonV2: workflowJsonV2 as any,
+  };
+}
+
+function parsePrepareMigrationPlanArgs(args: unknown): PrepareMigrationPlanArgs {
+  const input = objectArgs(args);
+  const workflowJsonV1 = input.workflowJsonV1;
+  const workflowJsonV2 = input.workflowJsonV2;
+  assertWorkflowJsonShape(workflowJsonV1, 'workflowJsonV1');
+  assertWorkflowJsonShape(workflowJsonV2, 'workflowJsonV2');
+
+  return {
+    productionWorkflowId: optionalString(input.productionWorkflowId, 'productionWorkflowId'),
+    workflowJsonV1: workflowJsonV1 as any,
+    workflowJsonV2: workflowJsonV2 as any,
+    rollbackSupported: optionalBoolean(input.rollbackSupported, 'rollbackSupported'),
   };
 }
 

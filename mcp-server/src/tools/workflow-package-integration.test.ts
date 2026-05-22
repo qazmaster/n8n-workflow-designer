@@ -29,6 +29,12 @@ import {
   prepareCleanupPlan,
   applyRepairPatch,
   prepareRetestPlan,
+  evaluateRepairScope,
+  prepareRefactorPlan,
+  prepareRedesignPlan,
+  generateWorkflowVariant,
+  compareWorkflowVariants,
+  prepareMigrationPlan,
 } from './sandbox.js';
 
 afterEach(() => {
@@ -1256,6 +1262,192 @@ export class TSWorkflow {
       expect(plan.recommendedMcpTool).toBe('n8n_delete_workflow');
       expect(plan.recommendedMcpArguments.id).toBe('test-clone-123');
       expect(plan.requiredTools).toEqual(['n8n_delete_workflow']);
+    });
+
+    it('evaluate_repair_scope classifies repairs correctly based on failed attempts and message keywords', async () => {
+      const basicWorkflow = { name: 'Basic Workflow', nodes: [], connections: {}, settings: {} };
+
+      // 1. Level 1 (Patch)
+      const resPatch = await evaluateRepairScope({
+        workflowJson: basicWorkflow,
+        failedAttempts: 0,
+        executionResult: { runData: {} }
+      });
+      expect(resPatch.scope).toBe('patch');
+      expect(resPatch.autoApplyAllowed).toBe(true);
+
+      // 2. Level 2 (Refactor)
+      const resRefactor = await evaluateRepairScope({
+        workflowJson: basicWorkflow,
+        failedAttempts: 1,
+        executionResult: {
+          runData: {
+            'Node A': [{ error: { message: 'Need validation of phone number format' } }]
+          }
+        }
+      });
+      expect(resRefactor.scope).toBe('refactor');
+      expect(resRefactor.autoApplyAllowed).toBe(true);
+
+      // 3. Level 3 (Redesign) via keywords
+      const resRedesignKw = await evaluateRepairScope({
+        workflowJson: basicWorkflow,
+        failedAttempts: 1,
+        executionResult: {
+          runData: {
+            'Node B': [{ error: { message: 'Authentication failure: invalid credentials' } }]
+          }
+        }
+      });
+      expect(resRedesignKw.scope).toBe('redesign');
+      expect(resRedesignKw.autoApplyAllowed).toBe(false);
+
+      // 4. Level 3 (Redesign) via failed attempts limit
+      const resRedesignLimit = await evaluateRepairScope({
+        workflowJson: basicWorkflow,
+        failedAttempts: 3,
+        executionResult: { runData: {} }
+      });
+      expect(resRedesignLimit.scope).toBe('redesign');
+      expect(resRedesignLimit.autoApplyAllowed).toBe(false);
+    });
+
+    it('prepare_refactor_plan creates a delegation request for workflow refactoring', async () => {
+      const testWorkflow = { name: 'CRM Sync', nodes: [], connections: {}, settings: {} };
+      const plan = await prepareRefactorPlan({
+        workflowJson: testWorkflow,
+        reason: 'Missing data validation set nodes'
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.refactorRequired).toBe(true);
+      expect(plan.recommendedMcpTool).toBe('design_workflow');
+      expect(plan.recommendedMcpArguments.description).toContain('Missing data validation set nodes');
+      expect(plan.instructions).toContain('design_workflow');
+    });
+
+    it('prepare_redesign_plan suggests structural architectural changes', async () => {
+      const testWorkflow = {
+        name: 'Webhook Trigger Workflow',
+        nodes: [{ name: 'Webhook', type: 'n8n-nodes-base.webhook' }],
+        connections: {},
+        settings: {}
+      };
+
+      // Test webhook/polling redesign
+      const planWeb = await prepareRedesignPlan({
+        workflowJson: testWorkflow,
+        reason: 'Change to polling trigger since webhooks are blocked'
+      });
+      expect(planWeb.redesignRequired).toBe(true);
+      expect(planWeb.newApproach).toContain('Polling');
+      expect(planWeb.migrationImpact.requiresNewWebhookUrl).toBe(true);
+      expect(planWeb.requiresUserApproval).toBe(true);
+
+      // Test credentials redesign
+      const planCred = await prepareRedesignPlan({
+        workflowJson: testWorkflow,
+        reason: 'Missing auth credentials'
+      });
+      expect(planCred.newApproach).toContain('authorization layers');
+      expect(planCred.migrationImpact.requiresTestCredentials).toBe(true);
+    });
+
+    it('generate_workflow_variant applies modifications and returns variant', async () => {
+      const baseWorkflow = {
+        name: 'Original Workflow',
+        nodes: [
+          { name: 'My Webhook', type: 'n8n-nodes-base.webhook' },
+          { name: 'Bitrix24 CRM', type: 'n8n-nodes-base.bitrix24', parameters: { id: '123' } }
+        ],
+        connections: {},
+        settings: {}
+      };
+
+      const result = await generateWorkflowVariant({
+        workflowJson: baseWorkflow,
+        variantName: 'Redesigned Polling Variant',
+        modifications: [
+          {
+            type: 'change_trigger',
+            newNode: { name: 'My Polling', type: 'n8n-nodes-base.pollingTrigger' }
+          },
+          {
+            type: 'replace_node',
+            targetNode: 'Bitrix24 CRM',
+            newNode: { parameters: { id: '456', mode: 'update' } }
+          },
+          {
+            type: 'add_node',
+            newNode: { name: 'New Helper Node', type: 'n8n-nodes-base.set' }
+          }
+        ]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.variantWorkflowJson.name).toBe('Redesigned Polling Variant');
+      expect(result.variantWorkflowJson.nodes[0].name).toBe('My Polling');
+      expect(result.variantWorkflowJson.nodes[1].parameters.id).toBe('456');
+      expect(result.variantWorkflowJson.nodes[1].parameters.mode).toBe('update');
+      expect(result.variantWorkflowJson.nodes[2].name).toBe('New Helper Node');
+    });
+
+    it('compare_workflow_variants detects added, removed, and modified components', async () => {
+      const v1 = {
+        nodes: [
+          { name: 'Node A', parameters: { val: '1' } },
+          { name: 'Node B', parameters: { val: '2' } }
+        ]
+      };
+      const v2 = {
+        nodes: [
+          { name: 'Node A', parameters: { val: 'updated_val', extra: '3' } },
+          { name: 'Node C', parameters: {} }
+        ]
+      };
+
+      const comparison = await compareWorkflowVariants({
+        workflowJsonV1: v1,
+        workflowJsonV2: v2
+      });
+
+      expect(comparison.differenceDetected).toBe(true);
+      expect(comparison.addedNodes).toContain('Node C');
+      expect(comparison.removedNodes).toContain('Node B');
+      expect(comparison.modifiedParameters.length).toBe(2);
+      expect(comparison.modifiedParameters.find(p => p.path === 'parameters.val')?.v2).toBe('updated_val');
+      expect(comparison.modifiedParameters.find(p => p.path === 'parameters.extra')?.v2).toBe('3');
+      expect(comparison.comparisonSummary).toContain('added 1 nodes, removed 1 nodes, and modified 2 parameters');
+    });
+
+    it('prepare_migration_plan produces deployment and rollback steps', async () => {
+      const v1 = {
+        name: 'Sync Flow',
+        nodes: [{ name: 'Webhook', type: 'n8n-nodes-base.webhook' }],
+        connections: {},
+        settings: {}
+      };
+      const v2 = {
+        name: 'Sync Flow v2',
+        nodes: [{ name: 'Polling', type: 'n8n-nodes-base.pollingTrigger' }],
+        connections: {},
+        settings: {}
+      };
+
+      const plan = await prepareMigrationPlan({
+        productionWorkflowId: 'prod-uuid-999',
+        workflowJsonV1: v1,
+        workflowJsonV2: v2
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.breakingChanges.length).toBe(1);
+      expect(plan.breakingChanges[0]).toContain('Trigger type changed');
+      expect(plan.deploymentSteps.some(s => s.includes('prod-uuid-999'))).toBe(true);
+      expect(plan.rollbackPlan.some(s => s.includes('prod-uuid-999'))).toBe(true);
+      expect(plan.recommendedMcpTool).toBe('n8n_update_full_workflow');
+      expect(plan.recommendedMcpArguments.id).toBe('prod-uuid-999');
+      expect(plan.instructions).toContain('n8n_update_full_workflow');
     });
   });
 });

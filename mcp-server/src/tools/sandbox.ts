@@ -626,3 +626,387 @@ export async function prepareCleanupPlan(args: PrepareCleanupPlanArgs): Promise<
     instructions,
   };
 }
+
+export interface EvaluateRepairScopeArgs {
+  workflowJson: Record<string, any>;
+  executionResult: any;
+  failedAttempts: number;
+  diagnosis?: any;
+}
+
+export interface EvaluateRepairScopeResult {
+  scope: 'patch' | 'refactor' | 'redesign';
+  reason: string;
+  failedAttempts: number;
+  recommendedAction: 'patch' | 'refactor' | 'redesign';
+  autoApplyAllowed: boolean;
+}
+
+export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promise<EvaluateRepairScopeResult> {
+  const { workflowJson, executionResult, failedAttempts, diagnosis } = args;
+
+  let errorMessage = '';
+  if (diagnosis && diagnosis.message) {
+    errorMessage = diagnosis.message;
+  } else if (executionResult) {
+    const resultObj = typeof executionResult === 'string' ? JSON.parse(executionResult) : executionResult;
+    const runData = resultObj?.data?.resultData?.runData || resultObj?.runData || {};
+    for (const nodeName in runData) {
+      const runs = runData[nodeName];
+      if (Array.isArray(runs)) {
+        for (const run of runs) {
+          if (run.error) {
+            errorMessage = run.error.message || '';
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  const lowerMsg = errorMessage.toLowerCase();
+
+  if (failedAttempts >= 3) {
+    return {
+      scope: 'redesign',
+      reason: `Repair loop exceeded maximum budget of 3 failed attempts on same root cause (${failedAttempts} attempts). Local patches are failing to resolve the issue.`,
+      failedAttempts,
+      recommendedAction: 'redesign',
+      autoApplyAllowed: false,
+    };
+  }
+
+  // Redesign triggers: incorrect trigger, webhook/polling switch, split workflow, queue/retry, external API mismatch, credential requirements
+  const redesignKeywords = ['trigger', 'webhook', 'polling', 'split', 'queue', 'rate limit', 'not supported', 'external api', 'credentials', 'dependency', 'auth'];
+  // Refactor triggers: normalization layer, validation nodes, error handling branches, switch routing, subflows
+  const refactorKeywords = ['normalization', 'validation', 'error branch', 'switch', 'subflow', 'nested', 'batches'];
+
+  if (redesignKeywords.some(kw => lowerMsg.includes(kw))) {
+    return {
+      scope: 'redesign',
+      reason: `Architectural mismatch detected: execution logs contain keywords suggesting trigger, credential, or external API limits mismatch that requires structural redesign.`,
+      failedAttempts,
+      recommendedAction: 'redesign',
+      autoApplyAllowed: false,
+    };
+  }
+
+  if (refactorKeywords.some(kw => lowerMsg.includes(kw))) {
+    return {
+      scope: 'refactor',
+      reason: `Structural refactoring recommended: execution logs indicate that data normalization, validation branches, subflows, or Switch nodes are needed.`,
+      failedAttempts,
+      recommendedAction: 'refactor',
+      autoApplyAllowed: true,
+    };
+  }
+
+  return {
+    scope: 'patch',
+    reason: `Local patch is suitable: the issue appears to be a minor parameter or expression mismatch that can be safely updated in place.`,
+    failedAttempts,
+    recommendedAction: 'patch',
+    autoApplyAllowed: true,
+  };
+}
+
+export interface PrepareRefactorPlanArgs {
+  workflowJson: Record<string, any>;
+  reason: string;
+}
+
+export interface PrepareRefactorPlanResult {
+  mode: 'delegated';
+  refactorRequired: boolean;
+  reason: string;
+  proposedChanges: string[];
+  recommendedMcpTool: string;
+  recommendedMcpArguments: Record<string, any>;
+  instructions: string;
+}
+
+export async function prepareRefactorPlan(args: PrepareRefactorPlanArgs): Promise<PrepareRefactorPlanResult> {
+  const { workflowJson, reason } = args;
+
+  const proposedChanges = [
+    `Insert validation or normalization Set/Code nodes before processing data in downstream integration nodes.`,
+    `Ensure connection flows use native error handling or Switch nodes instead of monolithic JS blocks.`,
+  ];
+
+  const recommendedMcpTool = 'design_workflow';
+  const recommendedMcpArguments = {
+    description: `Refactor the workflow "${workflowJson.name || 'Current Workflow'}" to resolve the following issue: ${reason}. Preserve original business goals but improve robustness and data validation.`,
+    idiomaticMode: true,
+  };
+
+  const instructions = `Refactor the sandbox workflow structure to resolve data shape/robustness issues:\n` +
+    `1. Call design_workflow with the recommended description to generate the refactored code.\n` +
+    `2. Compile, validate, and redeploy to the sandbox for testing.`;
+
+  return {
+    mode: 'delegated',
+    refactorRequired: true,
+    reason,
+    proposedChanges,
+    recommendedMcpTool,
+    recommendedMcpArguments,
+    instructions,
+  };
+}
+
+export interface PrepareRedesignPlanArgs {
+  workflowJson: Record<string, any>;
+  reason: string;
+  contract?: any;
+}
+
+export interface PrepareRedesignPlanResult {
+  redesignRequired: boolean;
+  reason: string;
+  oldApproach: string;
+  newApproach: string;
+  newWorkflows: string[];
+  migrationImpact: {
+    breakingChange: boolean;
+    requiresNewWebhookUrl: boolean;
+    requiresTestCredentials: boolean;
+    [key: string]: any;
+  };
+  requiresUserApproval: boolean;
+  instructions: string;
+}
+
+export async function prepareRedesignPlan(args: PrepareRedesignPlanArgs): Promise<PrepareRedesignPlanResult> {
+  const { workflowJson, reason } = args;
+
+  const oldApproach = `Single linear workflow trigger: ${workflowJson.nodes?.find((n: any) => n.type.includes('trigger') || n.type.includes('webhook'))?.name || 'Trigger'}`;
+
+  let newApproach = `Redesign workflow architecture. Split processing logic, transition from webhook to polling, or add queue/idempotency/retry patterns.`;
+  let newWorkflows = [
+    `${workflowJson.name || 'Workflow'} - Trigger Handler`,
+    `${workflowJson.name || 'Workflow'} - Processing Queue / Subflow`,
+  ];
+
+  const lowerReason = reason.toLowerCase();
+  if (lowerReason.includes('polling') || lowerReason.includes('webhook')) {
+    newApproach = `Change trigger model from Webhook to Polling (or vice versa) to align with third-party API capabilities.`;
+    newWorkflows = [`${workflowJson.name || 'Workflow'} (Polling Mode)`];
+  } else if (lowerReason.includes('credentials') || lowerReason.includes('auth')) {
+    newApproach = `Reconfigure authorization layers. Use service accounts instead of user-level OAuth, or secure credentials in n8n settings.`;
+    newWorkflows = [`${workflowJson.name || 'Workflow'} (Authorized Variant)`];
+  }
+
+  return {
+    redesignRequired: true,
+    reason,
+    oldApproach,
+    newApproach,
+    newWorkflows,
+    migrationImpact: {
+      breakingChange: true,
+      requiresNewWebhookUrl: lowerReason.includes('webhook'),
+      requiresTestCredentials: lowerReason.includes('credential') || lowerReason.includes('auth'),
+    },
+    requiresUserApproval: true,
+    instructions: `REDESIGN REQUIRED: The workflow architecture must be updated because: "${reason}". Please present this proposal to the user, wait for confirmation, then run generate_workflow_variant to create a new sandbox variant.`,
+  };
+}
+
+export interface GenerateWorkflowVariantArgs {
+  workflowJson: Record<string, any>;
+  variantName: string;
+  modifications: {
+    type: 'replace_node' | 'add_node' | 'split_workflow' | 'change_trigger';
+    targetNode?: string;
+    newNode?: Record<string, any>;
+    [key: string]: any;
+  }[];
+}
+
+export interface GenerateWorkflowVariantResult {
+  variantWorkflowJson: Record<string, any>;
+  success: boolean;
+  message: string;
+}
+
+export async function generateWorkflowVariant(args: GenerateWorkflowVariantArgs): Promise<GenerateWorkflowVariantResult> {
+  const { workflowJson, variantName, modifications } = args;
+  if (!workflowJson) {
+    throw new Error('generate_workflow_variant requires workflowJson.');
+  }
+
+  const variant = JSON.parse(JSON.stringify(workflowJson));
+  variant.name = variantName;
+
+  const nodes = variant.nodes || [];
+
+  for (const mod of modifications) {
+    if (mod.type === 'replace_node' && mod.targetNode && mod.newNode) {
+      const idx = nodes.findIndex((n: any) => n.name === mod.targetNode);
+      if (idx !== -1) {
+        nodes[idx] = { ...nodes[idx], ...mod.newNode };
+      }
+    } else if (mod.type === 'add_node' && mod.newNode) {
+      nodes.push(mod.newNode);
+    } else if (mod.type === 'change_trigger' && mod.newNode) {
+      const triggerIdx = nodes.findIndex((n: any) => n.type.toLowerCase().includes('trigger') || n.type.toLowerCase().includes('webhook'));
+      if (triggerIdx !== -1) {
+        nodes[triggerIdx] = { ...nodes[triggerIdx], ...mod.newNode };
+      }
+    }
+  }
+
+  variant.nodes = nodes;
+
+  return {
+    variantWorkflowJson: variant,
+    success: true,
+    message: `Successfully generated workflow variant "${variantName}" with ${modifications.length} modifications.`,
+  };
+}
+
+export interface CompareWorkflowVariantsArgs {
+  workflowJsonV1: Record<string, any>;
+  workflowJsonV2: Record<string, any>;
+}
+
+export interface CompareWorkflowVariantsResult {
+  differenceDetected: boolean;
+  addedNodes: string[];
+  removedNodes: string[];
+  modifiedParameters: { node: string; path: string; v1: any; v2: any }[];
+  comparisonSummary: string;
+}
+
+export async function compareWorkflowVariants(args: CompareWorkflowVariantsArgs): Promise<CompareWorkflowVariantsResult> {
+  const { workflowJsonV1, workflowJsonV2 } = args;
+  if (!workflowJsonV1 || !workflowJsonV2) {
+    throw new Error('compare_workflow_variants requires both workflowJsonV1 and workflowJsonV2.');
+  }
+
+  const nodesV1 = workflowJsonV1.nodes || [];
+  const nodesV2 = workflowJsonV2.nodes || [];
+
+  const namesV1: string[] = nodesV1.map((n: any) => n.name || '');
+  const namesV2: string[] = nodesV2.map((n: any) => n.name || '');
+
+  const addedNodes = namesV2.filter((name: string) => !namesV1.includes(name));
+  const removedNodes = namesV1.filter((name: string) => !namesV2.includes(name));
+
+  const modifiedParameters: any[] = [];
+
+  for (const node1 of nodesV1) {
+    const node2 = nodesV2.find((n: any) => n.name === node1.name);
+    if (node2) {
+      const params1 = node1.parameters || {};
+      const params2 = node2.parameters || {};
+      for (const key in params1) {
+        if (JSON.stringify(params1[key]) !== JSON.stringify(params2[key])) {
+          modifiedParameters.push({
+            node: node1.name,
+            path: `parameters.${key}`,
+            v1: params1[key],
+            v2: params2[key],
+          });
+        }
+      }
+      for (const key in params2) {
+        if (!(key in params1)) {
+          modifiedParameters.push({
+            node: node1.name,
+            path: `parameters.${key}`,
+            v1: undefined,
+            v2: params2[key],
+          });
+        }
+      }
+    }
+  }
+
+  const differenceDetected = addedNodes.length > 0 || removedNodes.length > 0 || modifiedParameters.length > 0;
+
+  let comparisonSummary = 'No changes detected between v1 and v2.';
+  if (differenceDetected) {
+    comparisonSummary = `Changes identified: added ${addedNodes.length} nodes, removed ${removedNodes.length} nodes, and modified ${modifiedParameters.length} parameters.`;
+  }
+
+  return {
+    differenceDetected,
+    addedNodes,
+    removedNodes,
+    modifiedParameters,
+    comparisonSummary,
+  };
+}
+
+export interface PrepareMigrationPlanArgs {
+  productionWorkflowId?: string;
+  workflowJsonV1: Record<string, any>;
+  workflowJsonV2: Record<string, any>;
+  rollbackSupported?: boolean;
+}
+
+export interface PrepareMigrationPlanResult {
+  mode: 'delegated';
+  breakingChanges: string[];
+  deploymentSteps: string[];
+  rollbackPlan: string[];
+  recommendedMcpTool: string;
+  recommendedMcpArguments: Record<string, any>;
+  instructions: string;
+}
+
+export async function prepareMigrationPlan(args: PrepareMigrationPlanArgs): Promise<PrepareMigrationPlanResult> {
+  const { productionWorkflowId, workflowJsonV1, workflowJsonV2, rollbackSupported = true } = args;
+
+  const breakingChanges: string[] = [];
+  const triggerV1 = workflowJsonV1.nodes?.find((n: any) => n.type.toLowerCase().includes('trigger') || n.type.toLowerCase().includes('webhook'));
+  const triggerV2 = workflowJsonV2.nodes?.find((n: any) => n.type.toLowerCase().includes('trigger') || n.type.toLowerCase().includes('webhook'));
+
+  if (triggerV1 && triggerV2 && triggerV1.type !== triggerV2.type) {
+    breakingChanges.push(`Trigger type changed from ${triggerV1.type} to ${triggerV2.type}. This requires manual trigger reactivation or webhook URL updates in client systems.`);
+  }
+
+  const deploymentSteps = [
+    `Deactivate current production workflow${productionWorkflowId ? ` (${productionWorkflowId})` : ''} to prevent concurrent runs.`,
+    `Deploy the new redesigned variant "${workflowJsonV2.name || 'Redesigned Workflow'}" to production.`,
+    `Verify external webhook URL registrations if the trigger type or webhook path was changed.`,
+    `Activate the new production workflow.`,
+  ];
+
+  const rollbackPlan = [
+    `If errors occur, deactivate the new production workflow.`,
+    productionWorkflowId
+      ? `Re-deploy the original v1 workflow using the backup JSON of "${workflowJsonV1.name || 'Original Workflow'}" to workflow ID ${productionWorkflowId}.`
+      : `Re-deploy the original v1 workflow and restore the previous settings.`,
+    `Re-activate the original workflow.`,
+  ];
+
+  const recommendedMcpTool = productionWorkflowId ? 'n8n_update_full_workflow' : 'n8n_create_workflow';
+  const recommendedMcpArguments: Record<string, any> = {
+    name: workflowJsonV2.name || 'Redesigned Workflow',
+    nodes: workflowJsonV2.nodes || [],
+    connections: workflowJsonV2.connections || {},
+    settings: workflowJsonV2.settings || {},
+  };
+  if (productionWorkflowId) {
+    recommendedMcpArguments.id = productionWorkflowId;
+    recommendedMcpArguments.intent = `Migrate/overwrite production workflow ${productionWorkflowId} with redesigned variant`;
+  }
+
+  const instructions = `Execute the migration to deploy the redesigned workflow variant:\n` +
+    `1. Deactivate current production workflow if active.\n` +
+    `2. Call the recommended tool ${recommendedMcpTool} with the provided arguments to update/create the production workflow.\n` +
+    `3. Reactivate the workflow and verify the integration.`;
+
+  return {
+    mode: 'delegated',
+    breakingChanges,
+    deploymentSteps,
+    rollbackPlan,
+    recommendedMcpTool,
+    recommendedMcpArguments,
+    instructions,
+  };
+}
+
