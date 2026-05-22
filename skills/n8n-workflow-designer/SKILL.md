@@ -142,6 +142,27 @@ Promotes the sandbox workflow to a production workflow (either creating it or up
 #### 7. `prepare_cleanup_plan`
 Builds a cleanup plan containing the delete commands (e.g., calling `n8n_delete_workflow`) to remove the sandbox test clone from n8n.
 
+#### 8. `evaluate_repair_scope`
+Evaluates the severity/level of repairs required for a failing execution run:
+- **Level 1 (Patch)**: Minor in-place parameters/expressions corrections. Auto-apply allowed.
+- **Level 2 (Refactor)**: Structural fixes (adding data validation nodes, normalization Set nodes, error-handling subflows). Auto-apply allowed with report.
+- **Level 3 (Redesign)**: Architectural misalignment (changing trigger types, splitting workflows, rate limiting or authentication issue, or 3+ failed repair attempts). Triggers redesign proposals.
+
+#### 9. `prepare_refactor_plan`
+Generates a structural refactoring plan to improve robustness or insert validation nodes. Recommends calling `design_workflow` with specific descriptions.
+
+#### 10. `prepare_redesign_plan`
+Generates an architectural redesign proposal when escalation triggers are hit (e.g. changing trigger model, re-authorizing). Outlines old vs new approaches, workflows list, migration impacts (e.g. new webhook url, credential requirements), and flags user approval.
+
+#### 11. `generate_workflow_variant`
+Programmatically generates modified sandbox workflow clone variants applying changes (e.g., replacing nodes, adding nodes, or changing trigger types).
+
+#### 12. `compare_workflow_variants`
+Detects and lists structural/parameter differences (added/removed nodes, modified parameters) between two workflow configurations.
+
+#### 13. `prepare_migration_plan`
+Prepares a step-by-step production migration and rollback checklist for redesigned workflow variants.
+
 ### Runtime-TDD Mode Guidelines
 
 1. Never assume static validation is enough.
