@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { promises as fs } from 'fs';
 import { v4 as uuidv4 } from 'uuid';
 import { compileWorkflow } from './compile.js';
 import { sanitizeWorkflowForDeploy } from './deploy.js';
@@ -346,7 +347,9 @@ export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<
   }
 
   const rootCauseId = computeRootCauseId(failedNode, errorClass, message);
-  const repairAttemptId = uuidv4();
+  const patchInfo = recommendedPatch ? `${recommendedPatch.node}:${recommendedPatch.path}:${JSON.stringify(recommendedPatch.to)}` : 'no_patch';
+  const rawIdString = `${workflowJson.name || 'Workflow'}:${rootCauseId}:${patchInfo}`;
+  const repairAttemptId = createHash('sha256').update(rawIdString).digest('hex').substring(0, 16);
 
   return {
     status: 'failed',
@@ -735,7 +738,10 @@ export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promis
   }
 
   const computedRootCauseId = args.rootCauseId || computeRootCauseId(failedNode, errorClass, message);
-  const computedRepairAttemptId = args.repairAttemptId || uuidv4();
+  const computedRepairAttemptId = args.repairAttemptId || (function() {
+    const rawIdString = `${workflowJson.name || 'Workflow'}:${computedRootCauseId}:attempt_${failedAttempts}`;
+    return createHash('sha256').update(rawIdString).digest('hex').substring(0, 16);
+  })();
 
   const lowerMsg = message.toLowerCase();
 
@@ -1201,5 +1207,182 @@ export async function prepareMigrationPlan(args: PrepareMigrationPlanArgs): Prom
     recommendedMcpArguments,
     instructions,
   };
+}
+
+export interface RepairSession {
+  repairSessionId: string;
+  workflowName: string;
+  attemptBudget: number;
+  failedAttempts: number;
+  rootCauseHistory: {
+    rootCauseId: string;
+    failedNode: string;
+    errorClass: string;
+    message: string;
+    timestamp: string;
+  }[];
+  variantHistory: {
+    repairAttemptId: string;
+    variantName: string;
+    timestamp: string;
+    appliedPatch?: any;
+    status: 'pending' | 'success' | 'failed';
+  }[];
+  status: 'active' | 'success' | 'escalated' | 'exhausted';
+}
+
+export interface ManageRepairSessionArgs {
+  action: 'init' | 'get' | 'record_attempt' | 'record_result' | 'escalate';
+  workflowName?: string;
+  attemptBudget?: number;
+  repairAttemptId?: string;
+  variantName?: string;
+  appliedPatch?: any;
+  success?: boolean;
+  executionResult?: any;
+  persistPath?: string;
+}
+
+export async function manageRepairSession(args: ManageRepairSessionArgs): Promise<RepairSession> {
+  const persistPath = args.persistPath || '.n8n-repair-session.json';
+  
+  if (args.action === 'init') {
+    if (!args.workflowName) {
+      throw new Error('workflowName is required for init action.');
+    }
+    const timestamp = new Date().toISOString();
+    const repairSessionId = createHash('sha256')
+      .update(`${args.workflowName}:${timestamp}`)
+      .digest('hex')
+      .substring(0, 16);
+    
+    const session: RepairSession = {
+      repairSessionId,
+      workflowName: args.workflowName,
+      attemptBudget: args.attemptBudget || 3,
+      failedAttempts: 0,
+      rootCauseHistory: [],
+      variantHistory: [],
+      status: 'active',
+    };
+    
+    await fs.writeFile(persistPath, JSON.stringify(session, null, 2), 'utf-8');
+    return session;
+  }
+  
+  // For all other actions, we load the existing session
+  let sessionData: string;
+  try {
+    sessionData = await fs.readFile(persistPath, 'utf-8');
+  } catch (error) {
+    throw new Error(`Repair session file not found at ${persistPath}. Call init action first.`);
+  }
+  
+  const session = JSON.parse(sessionData) as RepairSession;
+  
+  if (args.action === 'get') {
+    return session;
+  }
+  
+  if (args.action === 'record_attempt') {
+    if (!args.repairAttemptId || !args.variantName) {
+      throw new Error('repairAttemptId and variantName are required for record_attempt action.');
+    }
+    session.variantHistory.push({
+      repairAttemptId: args.repairAttemptId,
+      variantName: args.variantName,
+      timestamp: new Date().toISOString(),
+      appliedPatch: args.appliedPatch,
+      status: 'pending',
+    });
+    
+    await fs.writeFile(persistPath, JSON.stringify(session, null, 2), 'utf-8');
+    return session;
+  }
+  
+  if (args.action === 'record_result') {
+    if (args.success === undefined) {
+      throw new Error('success boolean is required for record_result action.');
+    }
+    
+    // Find the relevant attempt in variantHistory
+    let attemptIdx = -1;
+    if (args.repairAttemptId) {
+      attemptIdx = session.variantHistory.findIndex(h => h.repairAttemptId === args.repairAttemptId);
+    } else {
+      for (let i = session.variantHistory.length - 1; i >= 0; i--) {
+        if (session.variantHistory[i].status === 'pending') {
+          attemptIdx = i;
+          break;
+        }
+      }
+    }
+    
+    if (attemptIdx !== -1) {
+      session.variantHistory[attemptIdx].status = args.success ? 'success' : 'failed';
+    }
+    
+    if (args.success) {
+      session.status = 'success';
+    } else {
+      session.failedAttempts += 1;
+      
+      // Diagnose the failure to append to rootCauseHistory
+      let failedNode = 'Unknown Node';
+      let message = 'Execution failed.';
+      let errorClass = 'runtime_error';
+      
+      const execResult = args.executionResult;
+      if (execResult) {
+        const resultObj = typeof execResult === 'string' ? JSON.parse(execResult) : execResult;
+        const runData = resultObj?.data?.resultData?.runData || resultObj?.runData || {};
+        for (const nodeName in runData) {
+          const runs = runData[nodeName];
+          if (Array.isArray(runs)) {
+            for (const run of runs) {
+              if (run.error) {
+                failedNode = nodeName;
+                message = run.error.message || message;
+                errorClass = run.error.code || 'node_failure';
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      const rootCauseId = (function() {
+        const cleanNode = failedNode.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+        const cleanClass = errorClass.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+        const cleanMsg = message.replace(/[^a-zA-Z0-9_]/g, '_').substring(0, 30).toLowerCase();
+        const raw = `${cleanNode}:${cleanClass}:${cleanMsg}`;
+        return createHash('sha256').update(raw).digest('hex').substring(0, 16);
+      })();
+      session.rootCauseHistory.push({
+        rootCauseId,
+        failedNode,
+        errorClass,
+        message,
+        timestamp: new Date().toISOString(),
+      });
+      
+      if (session.failedAttempts >= session.attemptBudget) {
+        session.status = 'exhausted';
+      } else {
+        session.status = 'active';
+      }
+    }
+    
+    await fs.writeFile(persistPath, JSON.stringify(session, null, 2), 'utf-8');
+    return session;
+  }
+  
+  if (args.action === 'escalate') {
+    session.status = 'escalated';
+    await fs.writeFile(persistPath, JSON.stringify(session, null, 2), 'utf-8');
+    return session;
+  }
+  
+  throw new Error(`Unsupported repair session action: ${args.action}`);
 }
 

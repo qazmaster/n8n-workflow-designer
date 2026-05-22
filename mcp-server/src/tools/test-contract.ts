@@ -10,7 +10,11 @@ export const AssertionItemSchema = z.object({
     'matchesRegex',
     'statusCode',
     'lessThan',
-    'greaterThan'
+    'greaterThan',
+    'anyItem',
+    'allItems',
+    'itemCount',
+    'containsItemWhere'
   ]),
   value: z.any().optional(),
 });

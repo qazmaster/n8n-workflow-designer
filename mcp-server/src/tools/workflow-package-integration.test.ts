@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { compileWorkflow } from './compile.js';
 import { deployWorkflow } from './deploy.js';
 import { designWorkflow } from './design.js';
@@ -21,6 +21,7 @@ import {
   prepareIntegrationTestPlan,
   evaluateExecutionResult,
 } from './test-suite.js';
+import { promises as fs } from 'fs';
 import {
   prepareSandboxDeployPlan,
   prepareExecutionSuite,
@@ -35,6 +36,7 @@ import {
   generateWorkflowVariant,
   compareWorkflowVariants,
   prepareMigrationPlan,
+  manageRepairSession,
 } from './sandbox.js';
 
 afterEach(() => {
@@ -1575,6 +1577,256 @@ export class TSWorkflow {
       expect(plan.recommendedMcpTool).toBe('n8n_update_full_workflow');
       expect(plan.recommendedMcpArguments.id).toBe('prod-uuid-999');
       expect(plan.instructions).toContain('n8n_update_full_workflow');
+    });
+  });
+
+  describe('Runtime TDD, Deterministic Hashes, and Stateful Repair Session Enhancements', () => {
+    const sessionFile = '.n8n-repair-session.json';
+    let sessionBackup: string | null = null;
+
+    beforeAll(async () => {
+      try {
+        sessionBackup = await fs.readFile(sessionFile, 'utf8');
+      } catch {
+        sessionBackup = null;
+      }
+    });
+
+    afterAll(async () => {
+      if (sessionBackup !== null) {
+        await fs.writeFile(sessionFile, sessionBackup, 'utf8');
+      } else {
+        try {
+          await fs.unlink(sessionFile);
+        } catch {}
+      }
+    });
+
+    it('validates executeWorkflow and executeWorkflowTrigger node types in NODE_REGISTRY', async () => {
+      const result = await validateWorkflow({
+        workflowJson: {
+          name: 'Subflow Test Workflow',
+          nodes: [
+            {
+              id: 'trigger',
+              name: 'Subflow Trigger',
+              type: 'n8n-nodes-base.executeWorkflowTrigger',
+              typeVersion: 1,
+              position: [0, 0],
+            },
+            {
+              id: 'subflow-node',
+              name: 'Execute Subflow',
+              type: 'n8n-nodes-base.executeWorkflow',
+              typeVersion: 1,
+              position: [200, 0],
+            }
+          ],
+          connections: {},
+        },
+      });
+
+      expect(result.valid).toBe(true);
+      const unsupported = result.warnings.filter(w => w.code === 'registry-unsupported-node');
+      expect(unsupported).toEqual([]);
+    });
+
+    it('generates deterministic hashes for repairAttemptId in prepareRepairPatch and evaluateRepairScope', async () => {
+      const basicWorkflow = {
+        name: 'Deterministic Hash Test Workflow',
+        nodes: [
+          {
+            name: 'Bitrix24 CRM',
+            type: 'n8n-nodes-base.bitrix24',
+            parameters: { leadName: '{{ $json.Alice }}' }
+          }
+        ],
+        connections: {},
+        settings: {}
+      };
+
+      const executionResult = {
+        data: {
+          resultData: {
+            runData: {
+              'Bitrix24 CRM': [
+                {
+                  error: { message: ' Alice is not defined ', code: 'expression_error' },
+                  data: { main: [[{ json: { contact: { Alice: 'Alice' } } }]] }
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const patch1 = await prepareRepairPatch({
+        workflowJson: basicWorkflow,
+        executionResult
+      });
+
+      const patch2 = await prepareRepairPatch({
+        workflowJson: basicWorkflow,
+        executionResult
+      });
+
+      expect(patch1.repairAttemptId).toBe(patch2.repairAttemptId);
+      expect(patch1.repairAttemptId?.length).toBe(16);
+
+      const scope1 = await evaluateRepairScope({
+        workflowJson: basicWorkflow,
+        failedAttempts: 2,
+        executionResult
+      });
+
+      const scope2 = await evaluateRepairScope({
+        workflowJson: basicWorkflow,
+        failedAttempts: 2,
+        executionResult
+      });
+
+      expect(scope1.repairAttemptId).toBe(scope2.repairAttemptId);
+      expect(scope1.repairAttemptId?.length).toBe(16);
+      expect(scope1.repairAttemptId).not.toBe(patch1.repairAttemptId);
+    });
+
+    it('manages repair session state lifecycles', async () => {
+      // Ensure file starts fresh
+      try {
+        await fs.unlink(sessionFile);
+      } catch {}
+
+      // 1. Init session
+      const initRes = await manageRepairSession({
+        action: 'init',
+        workflowName: 'Test Workflow',
+        attemptBudget: 3
+      });
+      expect(initRes.workflowName).toBe('Test Workflow');
+      expect(initRes.attemptBudget).toBe(3);
+      expect(initRes.failedAttempts).toBe(0);
+      expect(initRes.variantHistory.length).toBe(0);
+      expect(initRes.status).toBe('active');
+
+      // 2. Get session
+      const getRes = await manageRepairSession({
+        action: 'get'
+      });
+      expect(getRes.workflowName).toBe('Test Workflow');
+
+      // 3. Record attempt
+      const attemptRes = await manageRepairSession({
+        action: 'record_attempt',
+        repairAttemptId: 'attempt_hash_1',
+        variantName: 'Variant_A',
+        appliedPatch: { node: 'NodeA', path: 'parameters.foo', to: 'bar' }
+      });
+      expect(attemptRes.variantHistory.length).toBe(1);
+      expect(attemptRes.variantHistory[0].appliedPatch).toEqual({ node: 'NodeA', path: 'parameters.foo', to: 'bar' });
+      expect(attemptRes.variantHistory[0].status).toBe('pending');
+
+      // 4. Record result (failed)
+      const failRes = await manageRepairSession({
+        action: 'record_result',
+        success: false,
+        executionResult: {
+          runData: {
+            'NodeA': [
+              {
+                error: {
+                  message: 'Invalid variable reference',
+                  code: 'expression_error'
+                }
+              }
+            ]
+          }
+        }
+      });
+      expect(failRes.variantHistory[0].status).toBe('failed');
+      expect(failRes.failedAttempts).toBe(1);
+      expect(failRes.rootCauseHistory.length).toBe(1);
+      expect(failRes.rootCauseHistory[0].failedNode).toBe('NodeA');
+      expect(failRes.rootCauseHistory[0].errorClass).toBe('expression_error');
+      expect(failRes.rootCauseHistory[0].message).toBe('Invalid variable reference');
+
+      // 5. Escalate
+      const escalateRes = await manageRepairSession({
+        action: 'escalate'
+      });
+      expect(escalateRes.status).toBe('escalated');
+
+      // Add a couple more failed attempts to exhaust budget
+      await manageRepairSession({
+        action: 'record_attempt',
+        repairAttemptId: 'attempt_hash_2',
+        variantName: 'Variant_B',
+        appliedPatch: { node: 'NodeA', path: 'parameters.foo2', to: 'bar2' }
+      });
+      const failRes2 = await manageRepairSession({
+        action: 'record_result',
+        success: false
+      });
+      expect(failRes2.failedAttempts).toBe(2);
+
+      await manageRepairSession({
+        action: 'record_attempt',
+        repairAttemptId: 'attempt_hash_3',
+        variantName: 'Variant_C',
+        appliedPatch: { node: 'NodeA', path: 'parameters.foo3', to: 'bar3' }
+      });
+      const failRes3 = await manageRepairSession({
+        action: 'record_result',
+        success: false
+      });
+      expect(failRes3.failedAttempts).toBe(3);
+      expect(failRes3.status).toBe('exhausted');
+    });
+
+    it('evaluates rich array assertions (anyItem, allItems, itemCount, containsItemWhere)', async () => {
+      const assertions = [
+        {
+          testCaseId: 'tc_array_eval',
+          nodeName: 'TestNode',
+          assertions: [
+            { field: 'items.val', operator: 'anyItem', value: 12 },
+            { field: 'items.val', operator: 'anyItem', value: { operator: 'greaterThan', value: 15 } },
+            { field: 'items.val', operator: 'allItems', value: { operator: 'greaterThan', value: 0 } },
+            { field: 'items', operator: 'itemCount', value: 3 },
+            { field: 'items.val', operator: 'itemCount', value: { operator: 'equals', value: 3 } },
+            { operator: 'containsItemWhere', value: { 'items.val': 12, 'name': 'item2' } }
+          ]
+        }
+      ];
+
+      const executionResult = {
+        data: {
+          resultData: {
+            runData: {
+              'TestNode': [
+                {
+                  data: {
+                    main: [
+                      [
+                        { json: { items: { val: 5 }, name: 'item1' } },
+                        { json: { items: { val: 12 }, name: 'item2' } },
+                        { json: { items: { val: 18 }, name: 'item3' } }
+                      ]
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const result = await evaluateExecutionResult({
+        executionResult,
+        assertions
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.results[0].passed).toBe(true);
     });
   });
 });

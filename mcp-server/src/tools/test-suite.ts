@@ -281,8 +281,61 @@ export async function evaluateExecutionResult(args: EvaluateExecutionResultArgs)
         const operator = assertItem.operator;
         const expectedVal = assertItem.value;
 
-        const actualVal = resolveJsonPath(primaryItem, field);
-        const match = evaluateOperator(actualVal, operator, expectedVal);
+        let match = false;
+        let actualVal: any;
+
+        if (operator === 'anyItem') {
+          actualVal = outputItems;
+          match = outputItems.some(item => {
+            const val = resolveJsonPath(item, field);
+            if (expectedVal && typeof expectedVal === 'object' && 'operator' in expectedVal && 'value' in expectedVal) {
+              return evaluateOperator(val, expectedVal.operator, expectedVal.value);
+            }
+            return evaluateOperator(val, 'equals', expectedVal);
+          });
+        } else if (operator === 'allItems') {
+          actualVal = outputItems;
+          match = outputItems.length > 0 && outputItems.every(item => {
+            const val = resolveJsonPath(item, field);
+            if (expectedVal && typeof expectedVal === 'object' && 'operator' in expectedVal && 'value' in expectedVal) {
+              return evaluateOperator(val, expectedVal.operator, expectedVal.value);
+            }
+            return evaluateOperator(val, 'equals', expectedVal);
+          });
+        } else if (operator === 'itemCount') {
+          let count = 0;
+          if (field) {
+            count = outputItems.filter(item => {
+              const val = resolveJsonPath(item, field);
+              return val !== undefined && val !== null;
+            }).length;
+          } else {
+            count = outputItems.length;
+          }
+          actualVal = count;
+          if (typeof expectedVal === 'number') {
+            match = count === expectedVal;
+          } else if (expectedVal && typeof expectedVal === 'object' && 'operator' in expectedVal && 'value' in expectedVal) {
+            match = evaluateOperator(count, expectedVal.operator, expectedVal.value);
+          } else {
+            match = false;
+          }
+        } else if (operator === 'containsItemWhere') {
+          actualVal = outputItems;
+          if (expectedVal && typeof expectedVal === 'object') {
+            match = outputItems.some(item => {
+              return Object.entries(expectedVal).every(([k, v]) => {
+                const val = resolveJsonPath(item, k);
+                return val == v;
+              });
+            });
+          } else {
+            match = false;
+          }
+        } else {
+          actualVal = resolveJsonPath(primaryItem, field);
+          match = evaluateOperator(actualVal, operator, expectedVal);
+        }
 
         if (!match) {
           passed = false;

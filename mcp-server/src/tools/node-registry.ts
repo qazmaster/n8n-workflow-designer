@@ -235,6 +235,15 @@ export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
     label: 'Email Trigger (IMAP)',
     credentialTypes: ['emailImapApi'],
   },
+  'n8n-nodes-base.executeWorkflow': {
+    type: 'n8n-nodes-base.executeWorkflow',
+    label: 'Execute Workflow',
+    requiredParameters: ['workflowId'],
+  },
+  'n8n-nodes-base.executeWorkflowTrigger': {
+    type: 'n8n-nodes-base.executeWorkflowTrigger',
+    label: 'Execute Workflow Trigger',
+  },
 };
 
 export function credentialRequirementsFor(type: string): string[] {

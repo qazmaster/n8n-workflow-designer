@@ -59,8 +59,10 @@ import {
   generateWorkflowVariant,
   compareWorkflowVariants,
   prepareMigrationPlan,
+  manageRepairSession,
   type PrepareSandboxDeployPlanArgs,
   type PrepareExecutionSuiteArgs,
+  type ManageRepairSessionArgs,
   type PrepareRepairPatchArgs,
   type PreparePromotionPlanArgs,
   type PrepareCleanupPlanArgs,
@@ -813,6 +815,53 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['workflowJsonV1', 'workflowJsonV2'],
         },
       },
+      {
+        name: 'manage_repair_session',
+        description: 'Initialize, retrieve, or update a stateful repair session to track failed attempts, root causes, and budget.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            action: {
+              type: 'string',
+              description: 'The session action to perform: init, get, record_attempt, record_result, or escalate',
+              enum: ['init', 'get', 'record_attempt', 'record_result', 'escalate'],
+            },
+            workflowName: {
+              type: 'string',
+              description: 'Name of the workflow (required for init)',
+            },
+            attemptBudget: {
+              type: 'number',
+              description: 'The maximum allowed repair attempts (default: 3, optional)',
+            },
+            repairAttemptId: {
+              type: 'string',
+              description: 'The attempt ID (required for record_attempt/record_result, optional)',
+            },
+            variantName: {
+              type: 'string',
+              description: 'Name of the variant (required for record_attempt)',
+            },
+            appliedPatch: {
+              type: 'object',
+              description: 'The applied patch details (optional)',
+            },
+            success: {
+              type: 'boolean',
+              description: 'Whether the attempt succeeded (required for record_result)',
+            },
+            executionResult: {
+              type: 'object',
+              description: 'The execution result log to diagnose root cause (optional)',
+            },
+            persistPath: {
+              type: 'string',
+              description: 'Custom file path to persist the session (optional)',
+            },
+          },
+          required: ['action'],
+        },
+      },
     ],
   };
 });
@@ -1335,6 +1384,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'manage_repair_session': {
+        const result = await manageRepairSession(parseManageRepairSessionArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
 
       default:
         throw new McpError(
@@ -1781,6 +1842,26 @@ function parsePrepareMigrationPlanArgs(args: unknown): PrepareMigrationPlanArgs 
     workflowJsonV1: workflowJsonV1 as any,
     workflowJsonV2: workflowJsonV2 as any,
     rollbackSupported: optionalBoolean(input.rollbackSupported, 'rollbackSupported'),
+  };
+}
+
+function parseManageRepairSessionArgs(args: unknown): ManageRepairSessionArgs {
+  const input = objectArgs(args);
+  const action = requiredString(input.action, 'action');
+  if (!['init', 'get', 'record_attempt', 'record_result', 'escalate'].includes(action)) {
+    throw new ArgumentError(`Invalid action: ${action}`);
+  }
+  
+  return {
+    action: action as any,
+    workflowName: optionalString(input.workflowName, 'workflowName'),
+    attemptBudget: optionalNumber(input.attemptBudget, 'attemptBudget'),
+    repairAttemptId: optionalString(input.repairAttemptId, 'repairAttemptId'),
+    variantName: optionalString(input.variantName, 'variantName'),
+    appliedPatch: input.appliedPatch,
+    success: optionalBoolean(input.success, 'success'),
+    executionResult: input.executionResult,
+    persistPath: optionalString(input.persistPath, 'persistPath'),
   };
 }
 
