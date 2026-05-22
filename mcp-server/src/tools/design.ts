@@ -252,43 +252,58 @@ function buildWorkflowPlan(args: {
     repositionNodes(nodes);
   }
 
-  if (lower.includes('switch') || lower.includes('статус') || lower.includes('ветки') || lower.includes('маршрутизировать')) {
+  const intents = detectIntents(args.description);
+
+  if (intents.has('filter')) {
+    // Check if filter isn't already added (we keep legacy check above as a fallback, but we should make sure we don't duplicate)
+    if (!nodes.some((n) => n.type === 'n8n-nodes-base.filter')) {
+      nodes.splice(1, 0, createFilterNode(1));
+      repositionNodes(nodes);
+    }
+  } else if (intents.has('if')) {
+    if (!nodes.some((n) => n.type === 'n8n-nodes-base.if')) {
+      nodes.splice(1, 0, createIfNode(1));
+      repositionNodes(nodes);
+    }
+  }
+
+  if (intents.has('switch')) {
     nodes.push(createSwitchNode(nodes.length));
   }
 
-  if (lower.includes('sort') || lower.includes('сортиров') || lower.includes('отсортировать')) {
+  if (intents.has('sort')) {
     nodes.push(createSortNode(nodes.length));
   }
 
-  if (lower.includes('limit') || lower.includes('лимит') || lower.includes('первые')) {
+  if (intents.has('limit')) {
     nodes.push(createLimitNode(nodes.length));
   }
 
-  if (lower.includes('remove duplicates') || lower.includes('dedupe') || lower.includes('дубликат') || lower.includes('уникальн')) {
+  if (intents.has('removeDuplicates')) {
     nodes.push(createRemoveDuplicatesNode(nodes.length));
   }
 
-  if (lower.includes('split out') || lower.includes('разбить массив') || lower.includes('каждый элемент массива')) {
+  if (intents.has('splitOut')) {
     nodes.push(createSplitOutNode(nodes.length));
   }
 
-  if (lower.includes('aggregate') || lower.includes('агрегировать') || lower.includes('собрать в список')) {
+  if (intents.has('aggregate')) {
     nodes.push(createAggregateNode(nodes.length));
   }
 
-  if (lower.includes('summarize') || lower.includes('посчитать') || lower.includes('сумм') || lower.includes('средн')) {
+  if (intents.has('summarize')) {
     nodes.push(createSummarizeNode(nodes.length));
   }
 
-  if (lower.includes('merge') || lower.includes('объединить потоки') || lower.includes('соединить данные') || lower.includes('join')) {
+  if (intents.has('merge')) {
     nodes.push(createMergeNode(nodes.length));
   }
 
-  if (lower.includes('compare datasets') || lower.includes('сравнить данные') || lower.includes('найти изменения') || lower.includes('diff')) {
+  if (intents.has('compareDatasets')) {
     nodes.push(createCompareDatasetsNode(nodes.length));
   }
 
-  if (lower.includes('rename') || lower.includes('переименовать поля') || lower.includes('rename keys')) {
+  if (intents.has('renameKeys')) {
     nodes.push(createRenameKeysNode(nodes.length));
   }
 
@@ -318,6 +333,95 @@ function buildWorkflowPlan(args: {
     errorWorkflowId: args.errorWorkflowId,
     nodes,
   };
+}
+
+function detectIntents(description: string): Set<string> {
+  const lower = description.toLowerCase();
+  const intents = new Set<string>();
+
+  const containsAny = (words: string[]) => words.some(word => lower.includes(word));
+
+  // 1. Filter
+  if (containsAny(['filter', 'фильтр', 'оставить только', 'отфильтровать', 'исключить', 'отсеять'])) {
+    intents.add('filter');
+  }
+
+  // 2. If
+  if (containsAny(['if', 'если', 'validate', 'check', 'проверить', 'валидация', 'проверка'])) {
+    intents.add('if');
+  }
+
+  // 3. Switch (route_by_multiple_statuses)
+  const isSwitch = containsAny(['switch', 'маршрутизировать', 'ветки', 'branching', 'routing', 'rules', 'в зависимости от']) ||
+    (containsAny(['статус', 'status']) && (
+      containsAny(['paid', 'expired', 'error', 'pending', 'success', 'approved', 'rejected']) ||
+      containsAny(['разделить по', 'ветвление', 'route by', 'branch by', 'different paths'])
+    ));
+  if (isSwitch) {
+    intents.add('switch');
+  }
+
+  // 4. Sort
+  const isSort = containsAny(['sort', 'сортиров', 'отсортировать', 'упорядочить', 'order by']) ||
+    (containsAny(['сравнить', 'compare']) && containsAny(['цены', 'стоимость', 'цену', 'cost', 'price', 'rates']) && containsAny(['лучший', 'выбрать', 'select', 'best', 'cheapest', 'дешевый']));
+  if (isSort) {
+    intents.add('sort');
+  }
+
+  // 5. Limit
+  if (containsAny(['limit', 'лимит', 'первые', 'last', 'first', 'top', 'последние', 'ограничить количество'])) {
+    intents.add('limit');
+  }
+
+  // 6. Remove Duplicates (deduplicate_by_field)
+  if (containsAny(['remove duplicates', 'dedupe', 'дубликат', 'уникальн', 'de-duplicate', 'очистить от дублей', 'убрать дубли'])) {
+    intents.add('removeDuplicates');
+  }
+
+  // 7. Split Out (split array items)
+  const isSplitOut = containsAny(['split out', 'каждый элемент массива', 'for each item', 'split array', 'разбить массив', 'разбить список', 'цикл по элементам']) ||
+    (containsAny(['разбить', 'split']) && containsAny(['массив', 'список', 'array', 'list', 'items', 'elements', 'товары', 'заказы', 'rows', 'строки таблицы']));
+  if (isSplitOut) {
+    intents.add('splitOut');
+  }
+
+  // 8. Aggregate (collect_many_items_to_list or concatenate_text)
+  const isAggregate = containsAny(['aggregate', 'агрегировать', 'собрать в список', 'collect to list', 'combine into array', 'группировать в список', 'group to list']) ||
+    (containsAny(['объединить', 'join', 'combine']) && containsAny(['текст', 'строки', 'сообщения', 'комментарии', 'в одно письмо', 'в одну строку', 'text', 'string', 'message', 'comment', 'into one email', 'into one string']));
+  if (isAggregate) {
+    intents.add('aggregate');
+  }
+
+  // 9. Summarize (aggregate_many_items_to_metric)
+  const isSummarize = (containsAny(['summarize', 'сумм', 'средн', 'average', 'mean', 'total sum', 'total amount']) ||
+    (containsAny(['посчитать', 'calculate', 'count']) && !containsAny(['для каждого', 'каждого', 'each', 'построчно', 'row-by-row']))) &&
+    (!containsAny(['комисси', 'налог', 'скидк', 'commission', 'tax', 'discount', 'прибыль', 'difference']) || containsAny(['сумм', 'total', 'average', 'count', 'общее']));
+  if (isSummarize) {
+    intents.add('summarize');
+  }
+
+  // 10. Merge (join_two_input_streams)
+  const isMerge = (containsAny(['merge', 'объединить потоки', 'соединить данные', 'join streams', 'merge streams', 'combine streams']) ||
+    (containsAny(['объединить', 'join', 'combine']) && containsAny(['потоки', 'ветки', 'источники', 'таблицы', 'файлы', 'данные из', 'streams', 'branches', 'sources', 'tables', 'files', 'data from']))) &&
+    !isAggregate;
+  if (isMerge) {
+    intents.add('merge');
+  }
+
+  // 11. Compare Datasets
+  const isCompareDatasets = (containsAny(['compare datasets', 'найти изменения', 'diff', 'find changes', 'сравнить списки', 'сравнить таблицы', 'сравнить два файла', 'compare two lists', 'сравнить данные']) ||
+    (containsAny(['сравнить', 'compare']) && containsAny(['списк', 'таблиц', 'файл', 'баз', 'datasets', 'lists', 'tables', 'данные', 'данных']))) &&
+    !isSort;
+  if (isCompareDatasets) {
+    intents.add('compareDatasets');
+  }
+
+  // 12. Rename Keys
+  if (containsAny(['rename', 'переименовать поля', 'rename keys', 'rename fields', 'поменять названия полей'])) {
+    intents.add('renameKeys');
+  }
+
+  return intents;
 }
 
 function applyNodeSettingsHeuristics(nodes: WorkflowNode[], description: string): void {
@@ -490,7 +594,17 @@ function analyzeTrigger(lower: string): WorkflowNode {
 }
 
 function needsSetTransform(lower: string): boolean {
-  return ['set ', 'map ', 'mapping', 'rename', 'format', 'prepare', 'extract', 'fields', 'transform'].some((term) => lower.includes(term));
+  if (['set ', 'map ', 'mapping', 'rename', 'format', 'prepare', 'extract', 'fields', 'transform'].some((term) => lower.includes(term))) {
+    return true;
+  }
+  // calculate field per item intent
+  if (
+    (lower.includes('посчитать') || lower.includes('вычислить') || lower.includes('calculate')) &&
+    (lower.includes('для каждого') || lower.includes('каждого') || lower.includes('each') || lower.includes('построчно') || lower.includes('row-by-row'))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function createSetNode(index: number): WorkflowNode {
@@ -1256,32 +1370,24 @@ function createCodeNode(index: number, language: 'js' | 'python' = 'js'): Workfl
 }
 
 function shouldAllowCodeNode(task: string): boolean {
-  const lower = task.toLowerCase();
-
-  const noCodePatterns = [
+  const intents = detectIntents(task);
+  const forbiddenIntents = [
     'filter',
-    'фильтр',
+    'if',
+    'switch',
     'sort',
-    'сортиров',
     'limit',
-    'лимит',
-    'duplicates',
-    'дубликат',
-    'split',
-    'разбить',
+    'removeDuplicates',
+    'splitOut',
     'aggregate',
-    'агрег',
     'summarize',
-    'посчитать',
     'merge',
-    'объединить',
-    'rename',
-    'переименовать',
+    'compareDatasets',
+    'renameKeys',
   ];
 
-  const isCommonTransformation = noCodePatterns.some(pattern => lower.includes(pattern));
-
-  if (isCommonTransformation) {
+  const hasForbiddenIntent = forbiddenIntents.some((intent) => intents.has(intent));
+  if (hasForbiddenIntent) {
     return false;
   }
 

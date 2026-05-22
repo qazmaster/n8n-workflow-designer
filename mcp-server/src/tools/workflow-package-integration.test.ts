@@ -826,6 +826,116 @@ export class DeprecatedNodesWorkflow {
       const types = compiled.nodes.map(n => n.type);
       expect(types).toContain('n8n-nodes-base.code');
     });
+
+    it('correctly maps intents to built-in nodes and rejects false-positive node types', async () => {
+      // 1. dedupe -> Remove Duplicates, no Code
+      const codeDedupe = await designWorkflow({
+        description: 'Manual trigger, then убрать дубликаты клиентов по email',
+        workflowName: 'Intent Dedupe',
+        includeErrorHandling: false,
+      });
+      const compiledDedupe = await compileWorkflow({ typescriptCode: codeDedupe });
+      const typesDedupe = compiledDedupe.nodes.map(n => n.type);
+      expect(typesDedupe).toContain('n8n-nodes-base.removeDuplicates');
+      expect(typesDedupe).not.toContain('n8n-nodes-base.code');
+
+      // 2. sort -> Sort, no Code
+      const codeSort = await designWorkflow({
+        description: 'Manual trigger, then отсортировать заказы по дате',
+        workflowName: 'Intent Sort',
+        includeErrorHandling: false,
+      });
+      const compiledSort = await compileWorkflow({ typescriptCode: codeSort });
+      const typesSort = compiledSort.nodes.map(n => n.type);
+      expect(typesSort).toContain('n8n-nodes-base.sort');
+      expect(typesSort).not.toContain('n8n-nodes-base.code');
+
+      // 3. split array -> Split Out, no Code
+      const codeSplit = await designWorkflow({
+        description: 'Manual trigger, then разбить массив товаров',
+        workflowName: 'Intent Split',
+        includeErrorHandling: false,
+      });
+      const compiledSplit = await compileWorkflow({ typescriptCode: codeSplit });
+      const typesSplit = compiledSplit.nodes.map(n => n.type);
+      expect(typesSplit).toContain('n8n-nodes-base.splitOut');
+      expect(typesSplit).not.toContain('n8n-nodes-base.code');
+
+      // 4. sum all orders -> Summarize, no Code
+      const codeSum = await designWorkflow({
+        description: 'Manual trigger, then посчитать сумму заказов',
+        workflowName: 'Intent Sum',
+        includeErrorHandling: false,
+      });
+      const compiledSum = await compileWorkflow({ typescriptCode: codeSum });
+      const typesSum = compiledSum.nodes.map(n => n.type);
+      expect(typesSum).toContain('n8n-nodes-base.summarize');
+      expect(typesSum).not.toContain('n8n-nodes-base.code');
+
+      // 5. calculate field per item -> Set/Edit Fields, not Summarize
+      const codeCalc = await designWorkflow({
+        description: 'Manual trigger, then посчитать комиссию для каждого заказа',
+        workflowName: 'Intent Calc',
+        includeErrorHandling: false,
+      });
+      const compiledCalc = await compileWorkflow({ typescriptCode: codeCalc });
+      const typesCalc = compiledCalc.nodes.map(n => n.type);
+      expect(typesCalc).not.toContain('n8n-nodes-base.summarize');
+      expect(typesCalc).toContain('n8n-nodes-base.set');
+
+      // 6. compare prices to choose best -> Sort/Limit, not Compare Datasets
+      const codeCompareBest = await designWorkflow({
+        description: 'Manual trigger, then сравнить цены и выбрать лучший вариант',
+        workflowName: 'Intent Compare Best',
+        includeErrorHandling: false,
+      });
+      const compiledCompareBest = await compileWorkflow({ typescriptCode: codeCompareBest });
+      const typesCompareBest = compiledCompareBest.nodes.map(n => n.type);
+      expect(typesCompareBest).not.toContain('n8n-nodes-base.compareDatasets');
+      expect(typesCompareBest).toContain('n8n-nodes-base.sort');
+
+      // 7. concatenate text -> Aggregate / Set, not Merge
+      const codeConcat = await designWorkflow({
+        description: 'Manual trigger, then объединить текст в одно письмо',
+        workflowName: 'Intent Concat',
+        includeErrorHandling: false,
+      });
+      const compiledConcat = await compileWorkflow({ typescriptCode: codeConcat });
+      const typesConcat = compiledConcat.nodes.map(n => n.type);
+      expect(typesConcat).not.toContain('n8n-nodes-base.merge');
+      expect(typesConcat.some(t => t === 'n8n-nodes-base.aggregate' || t === 'n8n-nodes-base.set')).toBe(true);
+
+      // 8. route paid/expired/error -> Switch, no Code
+      const codeRoute = await designWorkflow({
+        description: 'Manual trigger, then маршрутизировать по статусам paid, expired или error',
+        workflowName: 'Intent Route',
+        includeErrorHandling: false,
+      });
+      const compiledRoute = await compileWorkflow({ typescriptCode: codeRoute });
+      const typesRoute = compiledRoute.nodes.map(n => n.type);
+      expect(typesRoute).toContain('n8n-nodes-base.switch');
+      expect(typesRoute).not.toContain('n8n-nodes-base.code');
+
+      // 9. status to CRM -> No Switch
+      const codeStatusCrm = await designWorkflow({
+        description: 'Manual trigger, then статус отправить в CRM',
+        workflowName: 'Intent Status CRM',
+        includeErrorHandling: false,
+      });
+      const compiledStatusCrm = await compileWorkflow({ typescriptCode: codeStatusCrm });
+      const typesStatusCrm = compiledStatusCrm.nodes.map(n => n.type);
+      expect(typesStatusCrm).not.toContain('n8n-nodes-base.switch');
+
+      // 10. split task into steps -> No Split Out
+      const codeSplitTask = await designWorkflow({
+        description: 'Manual trigger, then разбить задачу на этапы',
+        workflowName: 'Intent Split Task',
+        includeErrorHandling: false,
+      });
+      const compiledSplitTask = await compileWorkflow({ typescriptCode: codeSplitTask });
+      const typesSplitTask = compiledSplitTask.nodes.map(n => n.type);
+      expect(typesSplitTask).not.toContain('n8n-nodes-base.splitOut');
+    });
   });
 
   describe('delegated deploy mode and prepare tools', () => {
