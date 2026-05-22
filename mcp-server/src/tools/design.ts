@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { workflow as sdkWorkflow, type NodeJSON, type WorkflowJSON } from '@n8n/workflow-sdk';
 import { CREDENTIAL_PLACEHOLDERS, communityPackageFor } from './node-registry.js';
+import { detectSelectedIntents, shouldAllowCodeNode as shouldAllowCodeNodeForIntent } from './intent-selector.js';
 
 export interface DesignWorkflowArgs {
   description: string;
@@ -435,7 +436,7 @@ function buildWorkflowPlan(args: {
 
   // Legacy inline conditional checks removed in favor of data-driven intent matching
 
-  const intents = detectIntents(args.description);
+  const intents = detectSelectedIntents(args.description);
 
   if (intents.has('filter')) {
     // Check if filter isn't already added (we keep legacy check above as a fallback, but we should make sure we don't duplicate)
@@ -491,7 +492,7 @@ function buildWorkflowPlan(args: {
   }
 
   if (lower.includes('code node') || lower.includes('javascript') || lower.includes('python') || lower.includes('run script')) {
-    if (shouldAllowCodeNode(args.description)) {
+    if (shouldAllowCodeNodeForIntent(args.description)) {
       const isPython = lower.includes('python');
       nodes.push(createCodeNode(nodes.length, isPython ? 'python' : 'js'));
     } else {
