@@ -31,6 +31,20 @@ import {
   type PrepareImportPlanArgs,
   type PrepareExportPlanArgs,
 } from './tools/prepare.js';
+import {
+  generateTestContract,
+  validateWorkflowAgainstContract,
+  type GenerateTestContractArgs,
+  type ValidateWorkflowAgainstContractArgs,
+} from './tools/test-contract.js';
+import {
+  prepareOfflineTestSuite,
+  prepareIntegrationTestPlan,
+  evaluateExecutionResult,
+  type PrepareOfflineTestSuiteArgs,
+  type PrepareIntegrationTestPlanArgs,
+  type EvaluateExecutionResultArgs,
+} from './tools/test-suite.js';
 
 const DEPLOY_MODE = (process.env.N8N_DESIGNER_DEPLOY_MODE || 'standalone').toLowerCase();
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -377,6 +391,96 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['workflowId'],
         },
       },
+      {
+        name: 'generate_test_contract',
+        description: 'Generate a declarative test contract (JSON) from a user prompt and optional workflow specifications.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            prompt: {
+              type: 'string',
+              description: 'Natural language description of the test scenario',
+            },
+            workflowSpec: {
+              type: 'string',
+              description: 'Optional workflow spec or description to scan for node names',
+            },
+          },
+          required: ['prompt'],
+        },
+      },
+      {
+        name: 'validate_workflow_against_contract',
+        description: 'Perform static path and policy checks on a workflow JSON against a declarative test contract.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Compiled workflow JSON',
+            },
+            contract: {
+              type: 'object',
+              description: 'Test contract JSON containing test cases and forbidden rules',
+            },
+          },
+          required: ['workflowJson', 'contract'],
+        },
+      },
+      {
+        name: 'prepare_offline_test_suite',
+        description: 'Generate a local TypeScript Vitest test file to perform offline validation of the workflow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowPath: {
+              type: 'string',
+              description: 'Absolute path to compiled workflow JSON or TypeScript code',
+            },
+            testPath: {
+              type: 'string',
+              description: 'Absolute path to output test file',
+            },
+          },
+          required: ['workflowPath', 'testPath'],
+        },
+      },
+      {
+        name: 'prepare_integration_test_plan',
+        description: 'Create an integration test plan overlay containing mock pinData and expected output assertions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Compiled workflow JSON',
+            },
+            contract: {
+              type: 'object',
+              description: 'Test contract JSON containing test cases and expected outputs',
+            },
+          },
+          required: ['workflowJson', 'contract'],
+        },
+      },
+      {
+        name: 'evaluate_execution_result',
+        description: 'Evaluate execution output or execution logs retrieved from n8n-mcp against test assertions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            executionResult: {
+              type: 'object',
+              description: 'Execution result object retrieved from n8n-mcp n8n_test_workflow or n8n_executions',
+            },
+            assertions: {
+              type: 'array',
+              description: 'List of expected assertions',
+            },
+          },
+          required: ['executionResult', 'assertions'],
+        },
+      },
     ],
   };
 });
@@ -682,6 +786,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'generate_test_contract': {
+        const result = await generateTestContract(parseGenerateTestContractArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'validate_workflow_against_contract': {
+        const result = await validateWorkflowAgainstContract(parseValidateWorkflowAgainstContractArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_offline_test_suite': {
+        const result = await prepareOfflineTestSuite(parsePrepareOfflineTestSuiteArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_integration_test_plan': {
+        const result = await prepareIntegrationTestPlan(parsePrepareIntegrationTestPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'evaluate_execution_result': {
+        const result = await evaluateExecutionResult(parseEvaluateExecutionResultArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
       default:
         throw new McpError(
           ErrorCode.MethodNotFound,
@@ -836,6 +1000,84 @@ function parsePrepareExportPlanArgs(args: unknown): PrepareExportPlanArgs {
   return {
     workflowId: requiredString(input.workflowId, 'workflowId'),
     includeMetadata: optionalBoolean(input.includeMetadata, 'includeMetadata'),
+  };
+}
+
+function parseGenerateTestContractArgs(args: unknown): GenerateTestContractArgs {
+  const input = objectArgs(args);
+  return {
+    prompt: requiredString(input.prompt, 'prompt'),
+    workflowSpec: optionalString(input.workflowSpec, 'workflowSpec'),
+  };
+}
+
+function parseValidateWorkflowAgainstContractArgs(args: unknown): ValidateWorkflowAgainstContractArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+  
+  const contract = input.contract;
+  if (!isObjectRecord(contract)) {
+    throw new ArgumentError('contract must be an object.');
+  }
+  if (typeof contract.workflowName !== 'string') {
+    throw new ArgumentError('contract.workflowName must be a string.');
+  }
+  if (!Array.isArray(contract.testCases)) {
+    throw new ArgumentError('contract.testCases must be an array.');
+  }
+
+  return {
+    workflowJson: workflowJson as any,
+    contract: contract as any,
+  };
+}
+
+function parsePrepareOfflineTestSuiteArgs(args: unknown): PrepareOfflineTestSuiteArgs {
+  const input = objectArgs(args);
+  return {
+    workflowPath: requiredString(input.workflowPath, 'workflowPath'),
+    testPath: requiredString(input.testPath, 'testPath'),
+  };
+}
+
+function parsePrepareIntegrationTestPlanArgs(args: unknown): PrepareIntegrationTestPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  const contract = input.contract;
+  if (!isObjectRecord(contract)) {
+    throw new ArgumentError('contract must be an object.');
+  }
+  if (typeof contract.workflowName !== 'string') {
+    throw new ArgumentError('contract.workflowName must be a string.');
+  }
+  if (!Array.isArray(contract.testCases)) {
+    throw new ArgumentError('contract.testCases must be an array.');
+  }
+
+  return {
+    workflowJson: workflowJson as any,
+    contract: contract as any,
+  };
+}
+
+function parseEvaluateExecutionResultArgs(args: unknown): EvaluateExecutionResultArgs {
+  const input = objectArgs(args);
+  const executionResult = input.executionResult;
+  if (!isObjectRecord(executionResult)) {
+    throw new ArgumentError('executionResult must be an object.');
+  }
+
+  const assertions = input.assertions;
+  if (!Array.isArray(assertions)) {
+    throw new ArgumentError('assertions must be an array.');
+  }
+
+  return {
+    executionResult,
+    assertions,
   };
 }
 

@@ -12,6 +12,15 @@ import {
   prepareImportPlan,
   prepareExportPlan,
 } from './prepare.js';
+import {
+  generateTestContract,
+  validateWorkflowAgainstContract,
+} from './test-contract.js';
+import {
+  prepareOfflineTestSuite,
+  prepareIntegrationTestPlan,
+  evaluateExecutionResult,
+} from './test-suite.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -854,6 +863,152 @@ export class TSWorkflow {
       });
       expect(plan.instructions).toContain('metadata');
       expect(plan.instructions).toContain('CRITICAL: Before calling the recommended tool, check if the required n8n-mcp tools');
+    });
+  });
+
+  describe('Three-Layered TDD Model', () => {
+    it('generateTestContract parses prompt and spec to produce a contract', async () => {
+      const contract = await generateTestContract({
+        prompt: 'Create a lead in Bitrix24 from webhook',
+        workflowSpec: JSON.stringify({
+          nodes: [
+            { name: 'Webhook', type: 'n8n-nodes-base.webhook' },
+            { name: 'Bitrix24 CRM', type: 'n8n-nodes-base.bitrix24' }
+          ]
+        })
+      });
+
+      expect(contract.workflowName).toBe('Generated Workflow Test Contract');
+      expect(contract.testCases.length).toBe(1);
+      expect(contract.testCases[0].expected.pathExists).toEqual(['Webhook', 'Bitrix24 CRM']);
+    });
+
+    it('validateWorkflowAgainstContract validates path and secrets policies', async () => {
+      const contract = {
+        workflowName: 'Test Contract',
+        testCases: [
+          {
+            id: 'path_check',
+            expected: {
+              pathExists: ['Trigger', 'Action']
+            }
+          }
+        ],
+        forbidden: {
+          credentials: true,
+          nodes: ['forbidden-node']
+        }
+      };
+
+      const invalidWorkflow = {
+        nodes: [
+          { name: 'Trigger', type: 'n8n-nodes-base.webhook', parameters: { api_key: 'plainTextPassword123' } },
+          { name: 'Action', type: 'n8n-nodes-base.telegram' },
+          { name: 'BadNode', type: 'forbidden-node' }
+        ],
+        connections: {
+          'Trigger': {
+            main: [[]] // Disconnected
+          }
+        }
+      };
+
+      const result = await validateWorkflowAgainstContract({
+        workflowJson: invalidWorkflow,
+        contract
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.includes('credential/secret'))).toBe(true);
+      expect(result.errors.some(e => e.includes('forbidden node'))).toBe(true);
+      expect(result.errors.some(e => e.includes('path from "Trigger" to "Action"'))).toBe(true);
+    });
+
+    it('prepareOfflineTestSuite and prepareIntegrationTestPlan generate plans', async () => {
+      const contract = {
+        workflowName: 'Test Contract',
+        testCases: [
+          {
+            id: 'test_1',
+            input: { body: { name: 'TDD User' } },
+            expected: {
+              pathExists: ['Trigger', 'Action'],
+              finalOutput: { ok: true }
+            }
+          }
+        ]
+      };
+
+      const workflowJson = {
+        name: 'Test Workflow',
+        nodes: [
+          { name: 'Trigger', type: 'n8n-nodes-base.webhook' },
+          { name: 'Action', type: 'n8n-nodes-base.telegram' }
+        ],
+        connections: {}
+      };
+
+      const offlinePlan = await prepareOfflineTestSuite({
+        workflowPath: '/path/to/workflow.json',
+        testPath: '/path/to/workflow.test.ts'
+      });
+      expect(offlinePlan.testCode).toContain('describe(\'Workflow Offline Contract');
+
+      const integrationPlan = await prepareIntegrationTestPlan({
+        workflowJson,
+        contract
+      });
+      expect(integrationPlan.mode).toBe('delegated');
+      expect(integrationPlan.pinData).toEqual({
+        'Trigger': [{ json: { name: 'TDD User' } }]
+      });
+      expect(integrationPlan.assertions).toEqual([
+        {
+          testCaseId: 'test_1',
+          nodeName: 'Action',
+          expectedOutput: { ok: true }
+        }
+      ]);
+    });
+
+    it('evaluateExecutionResult verifies assertions against logs', async () => {
+      const assertions = [
+        {
+          testCaseId: 'test_1',
+          nodeName: 'Action',
+          expectedOutput: { ok: true, id: 100 }
+        }
+      ];
+
+      const executionResult = {
+        data: {
+          resultData: {
+            runData: {
+              'Action': [
+                {
+                  data: {
+                    main: [
+                      [
+                        {
+                          json: { ok: true, id: 100 }
+                        }
+                      ]
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const result = await evaluateExecutionResult({
+        executionResult,
+        assertions
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.results[0].passed).toBe(true);
     });
   });
 });

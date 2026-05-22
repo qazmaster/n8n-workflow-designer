@@ -75,6 +75,26 @@ Use these tools in order for a safe workflow lifecycle:
 | `sdk-json` | The caller wants SDK-normalized JSON directly. |
 | `both` | You need reviewable TypeScript plus JSON for inspection. |
 
+## Three-Layered TDD Model (Test-Driven Development)
+
+The designer implements a **Three-Layered TDD Model** that separates testing specifications and mocks from production code:
+
+*   **Level 1 — Design Contract TDD**: Create a declarative test contract defining expected paths (e.g. from trigger to action nodes), expected node outputs, and forbidden credential rules (e.g. preventing hardcoded tokens).
+*   **Level 2 — Offline Structural TDD**: Statically validate the compiled workflow JSON against the contract policies, and generate localized Vitest/Jest `.test.ts` test suite files for offline pipeline runs.
+*   **Level 3 — Integration TDD**: Generate test overlay execution plans mapping mock `pinData` inputs onto triggers. Execute these in a test/sandbox n8n environment, and automatically assert the final execution outputs.
+
+### TDD Execution Lifecycle
+To implement a workflow using TDD, follow this sequence:
+1.  **Generate Contract**: Call `generate_test_contract` with the natural language description/prompt.
+2.  **Design & Compile**: Design the TypeScript/JSON workflow satisfying the contract, then compile it.
+3.  **Static Validation**: Call `validate_workflow_against_contract` to check connectivity paths and secret-sniffing rules.
+4.  **Offline Test Suite**: Call `prepare_offline_test_suite` to generate a Vitest file for automated offline pipelines.
+5.  **Integration Test Plan**: Call `prepare_integration_test_plan` to construct the mock overlay.
+6.  **Execute & Evaluate**: Run the test workflow in the n8n sandbox (using `recommendedNextTool`), then call `evaluate_execution_result` on the returned execution logs to verify assertions.
+
+> [!IMPORTANT]
+> **Decoupled test overlay rule**: Never inject mock `pinData` or fake credentials directly into production workflow JSON or `prepare_deploy_plan`. Keep testing mock data isolated in the integration plan overlay.
+
 ## Workflow Design Process
 
 ### Step 1: Understand Requirements
