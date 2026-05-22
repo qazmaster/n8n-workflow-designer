@@ -21,6 +21,13 @@ import {
   prepareIntegrationTestPlan,
   evaluateExecutionResult,
 } from './test-suite.js';
+import {
+  prepareSandboxDeployPlan,
+  prepareExecutionSuite,
+  prepareRepairPatch,
+  preparePromotionPlan,
+  prepareCleanupPlan,
+} from './sandbox.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -1009,6 +1016,139 @@ export class TSWorkflow {
 
       expect(result.success).toBe(true);
       expect(result.results[0].passed).toBe(true);
+    });
+  });
+
+  describe('Sandbox Runtime TDD and Repair Loop', () => {
+    const sampleWorkflowJson = {
+      name: 'Intake Workflow',
+      nodes: [
+        { name: 'Webhook', type: 'n8n-nodes-base.webhook' },
+        { name: 'Bitrix24 CRM', type: 'n8n-nodes-base.bitrix24' }
+      ],
+      connections: {},
+      settings: {}
+    };
+
+    it('prepare_sandbox_deploy_plan returns test-inactive clone settings', async () => {
+      const plan = await prepareSandboxDeployPlan({
+        workflowJson: sampleWorkflowJson,
+        sandboxSuffix: '_test'
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.target).toBe('sandbox');
+      expect(plan.workflowName).toBe('[TEST] Intake Workflow_test');
+      expect(plan.active).toBe(false);
+      expect(plan.tags).toContain('test');
+      expect(plan.sanitizedWorkflowJson.name).toBe('[TEST] Intake Workflow_test');
+      expect(plan.sanitizedWorkflowJson.active).toBe(false);
+      expect(plan.recommendedMcpTool).toBe('n8n_create_workflow');
+      expect(plan.requiredTools).toContain('n8n_list_workflows');
+    });
+
+    it('prepare_execution_suite parses test cases', async () => {
+      const contract = {
+        workflowName: 'Test Contract',
+        testCases: [
+          {
+            id: 'tc1',
+            description: 'Verify lead intake',
+            input: { name: 'Alice' },
+            expected: { pathExists: ['Webhook', 'Bitrix24 CRM'], finalOutput: { ok: true } }
+          }
+        ]
+      };
+
+      const suite = await prepareExecutionSuite({
+        workflowId: 'test-clone-123',
+        contract
+      });
+
+      expect(suite.mode).toBe('delegated');
+      expect(suite.workflowId).toBe('test-clone-123');
+      expect(suite.testCases.length).toBe(1);
+      expect(suite.testCases[0].id).toBe('tc1');
+      expect(suite.testCases[0].recommendedMcpArguments.data).toEqual({ name: 'Alice' });
+      expect(suite.testCases[0].assertions[0].nodeName).toBe('Bitrix24 CRM');
+    });
+
+    it('prepare_repair_patch diagnoses expression errors', async () => {
+      const executionResult = {
+        data: {
+          resultData: {
+            runData: {
+              'Bitrix24 CRM': [
+                {
+                  error: {
+                    message: ' Alice is not defined ',
+                    code: 'expression_error'
+                  },
+                  data: {
+                    main: [[{ json: { inputField: 'Alice' } }]]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const patch = await prepareRepairPatch({
+        workflowJson: sampleWorkflowJson,
+        executionResult
+      });
+
+      expect(patch.status).toBe('failed');
+      expect(patch.failedNode).toBe('Bitrix24 CRM');
+      expect(patch.errorType).toBe('missing_parameter_or_invalid_expression');
+      expect(patch.suspectedCause).toContain('expression references a parameter');
+      expect(patch.proposedPatch.nodeType).toBe('n8n-nodes-base.bitrix24');
+    });
+
+    it('prepare_promotion_plan blocks promotion if gates fail and allows if gates pass', async () => {
+      const failedGatesResult = await preparePromotionPlan({
+        testWorkflowId: 'test-clone-123',
+        workflowJson: sampleWorkflowJson,
+        gates: {
+          staticValidation: 'passed',
+          sandboxExecutions: 'failed',
+          credentialPolicy: 'passed',
+          noTestArtifacts: 'passed'
+        }
+      });
+
+      expect(failedGatesResult.promotionAllowed).toBe(false);
+      expect(failedGatesResult.failedGates).toContain('sandboxExecutions');
+
+      const passedGatesResult = await preparePromotionPlan({
+        testWorkflowId: 'test-clone-123',
+        productionWorkflowId: 'prod-456',
+        workflowJson: sampleWorkflowJson,
+        gates: {
+          staticValidation: 'passed',
+          sandboxExecutions: 'passed',
+          credentialPolicy: 'passed',
+          noTestArtifacts: 'passed'
+        }
+      });
+
+      expect(passedGatesResult.promotionAllowed).toBe(true);
+      expect(passedGatesResult.target?.mode).toBe('update-by-id');
+      expect(passedGatesResult.target?.productionWorkflowId).toBe('prod-456');
+      expect(passedGatesResult.sanitizedWorkflowJson?.name).toBe('Intake Workflow');
+      expect(passedGatesResult.sanitizedWorkflowJson?.active).toBe(true);
+    });
+
+    it('prepare_cleanup_plan builds cleanup commands', async () => {
+      const plan = await prepareCleanupPlan({
+        sandboxWorkflowId: 'test-clone-123'
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.recommendedMcpTool).toBe('n8n_delete_workflow');
+      expect(plan.recommendedMcpArguments.id).toBe('test-clone-123');
+      expect(plan.requiredTools).toEqual(['n8n_delete_workflow']);
     });
   });
 });

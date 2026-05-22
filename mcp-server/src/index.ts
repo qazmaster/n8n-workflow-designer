@@ -45,6 +45,18 @@ import {
   type PrepareIntegrationTestPlanArgs,
   type EvaluateExecutionResultArgs,
 } from './tools/test-suite.js';
+import {
+  prepareSandboxDeployPlan,
+  prepareExecutionSuite,
+  prepareRepairPatch,
+  preparePromotionPlan,
+  prepareCleanupPlan,
+  type PrepareSandboxDeployPlanArgs,
+  type PrepareExecutionSuiteArgs,
+  type PrepareRepairPatchArgs,
+  type PreparePromotionPlanArgs,
+  type PrepareCleanupPlanArgs,
+} from './tools/sandbox.js';
 
 const DEPLOY_MODE = (process.env.N8N_DESIGNER_DEPLOY_MODE || 'standalone').toLowerCase();
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
@@ -481,6 +493,125 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['executionResult', 'assertions'],
         },
       },
+      {
+        name: 'prepare_sandbox_deploy_plan',
+        description: 'Prepare a sandbox deployment plan clone with test tags, inactive status, and a prefixed/suffixed name.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Compiled workflow JSON',
+            },
+            typescriptCode: {
+              type: 'string',
+              description: 'TypeScript workflow code',
+            },
+            filePath: {
+              type: 'string',
+              description: 'Path to .workflow.ts file',
+            },
+            sandboxWorkflowId: {
+              type: 'string',
+              description: 'Existing sandbox workflow ID to update (optional)',
+            },
+            sandboxSuffix: {
+              type: 'string',
+              description: 'Suffix to append to name (default: _sandbox)',
+            },
+          },
+        },
+      },
+      {
+        name: 'prepare_execution_suite',
+        description: 'Generate execution plan suite matching all contract test cases to run on the sandbox clone.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowId: {
+              type: 'string',
+              description: 'Sandbox workflow ID',
+            },
+            contract: {
+              type: 'object',
+              description: 'Test contract JSON containing test cases',
+            },
+          },
+          required: ['workflowId', 'contract'],
+        },
+      },
+      {
+        name: 'prepare_repair_patch',
+        description: 'Analyze sandbox manual execution results, diagnosing bugs and recommending expression/parameter patches.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Original or current workflow JSON',
+            },
+            executionResult: {
+              type: 'object',
+              description: 'Execution result object retrieved from n8n',
+            },
+            failedNodeName: {
+              type: 'string',
+              description: 'Name of the node that failed (optional)',
+            },
+            errorMessage: {
+              type: 'string',
+              description: 'Error message (optional)',
+            },
+          },
+          required: ['workflowJson', 'executionResult'],
+        },
+      },
+      {
+        name: 'prepare_promotion_plan',
+        description: 'Evaluate quality gates and promote a validated test clone workflow to a production workflow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            testWorkflowId: {
+              type: 'string',
+              description: 'Sandbox test clone workflow ID',
+            },
+            productionWorkflowId: {
+              type: 'string',
+              description: 'Production workflow ID to update (optional)',
+            },
+            workflowJson: {
+              type: 'object',
+              description: 'Workflow JSON to promote',
+            },
+            gates: {
+              type: 'object',
+              properties: {
+                staticValidation: { type: 'string', enum: ['passed', 'failed'] },
+                sandboxExecutions: { type: 'string', enum: ['passed', 'failed'] },
+                credentialPolicy: { type: 'string', enum: ['passed', 'failed'] },
+                noTestArtifacts: { type: 'string', enum: ['passed', 'failed'] },
+              },
+              required: ['staticValidation', 'sandboxExecutions', 'credentialPolicy', 'noTestArtifacts'],
+            },
+          },
+          required: ['testWorkflowId', 'workflowJson', 'gates'],
+        },
+      },
+      {
+        name: 'prepare_cleanup_plan',
+        description: 'Prepare a cleanup plan to delete the sandbox test clone workflow.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sandboxWorkflowId: {
+              type: 'string',
+              description: 'Sandbox workflow ID to delete',
+            },
+          },
+          required: ['sandboxWorkflowId'],
+        },
+      },
     ],
   };
 });
@@ -846,6 +977,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'prepare_sandbox_deploy_plan': {
+        const result = await prepareSandboxDeployPlan(parsePrepareSandboxDeployPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_execution_suite': {
+        const result = await prepareExecutionSuite(parsePrepareExecutionSuiteArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_repair_patch': {
+        const result = await prepareRepairPatch(parsePrepareRepairPatchArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_promotion_plan': {
+        const result = await preparePromotionPlan(parsePreparePromotionPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_cleanup_plan': {
+        const result = await prepareCleanupPlan(parsePrepareCleanupPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
       default:
         throw new McpError(
           ErrorCode.MethodNotFound,
@@ -1078,6 +1269,91 @@ function parseEvaluateExecutionResultArgs(args: unknown): EvaluateExecutionResul
   return {
     executionResult,
     assertions,
+  };
+}
+
+function parsePrepareSandboxDeployPlanArgs(args: unknown): PrepareSandboxDeployPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  if (workflowJson !== undefined) {
+    assertWorkflowJsonShape(workflowJson, 'workflowJson');
+  }
+  return {
+    workflowJson,
+    typescriptCode: optionalString(input.typescriptCode, 'typescriptCode'),
+    filePath: optionalString(input.filePath, 'filePath'),
+    sandboxWorkflowId: optionalString(input.sandboxWorkflowId, 'sandboxWorkflowId'),
+    sandboxSuffix: optionalString(input.sandboxSuffix, 'sandboxSuffix'),
+  };
+}
+
+function parsePrepareExecutionSuiteArgs(args: unknown): PrepareExecutionSuiteArgs {
+  const input = objectArgs(args);
+  const contract = input.contract;
+  if (!isObjectRecord(contract)) {
+    throw new ArgumentError('contract must be an object.');
+  }
+  if (typeof contract.workflowName !== 'string') {
+    throw new ArgumentError('contract.workflowName must be a string.');
+  }
+  if (!Array.isArray(contract.testCases)) {
+    throw new ArgumentError('contract.testCases must be an array.');
+  }
+
+  return {
+    workflowId: requiredString(input.workflowId, 'workflowId'),
+    contract: contract as any,
+  };
+}
+
+function parsePrepareRepairPatchArgs(args: unknown): PrepareRepairPatchArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  const executionResult = input.executionResult;
+  if (!isObjectRecord(executionResult)) {
+    throw new ArgumentError('executionResult must be an object.');
+  }
+
+  return {
+    workflowJson: workflowJson as any,
+    executionResult,
+    failedNodeName: optionalString(input.failedNodeName, 'failedNodeName'),
+    errorMessage: optionalString(input.errorMessage, 'errorMessage'),
+  };
+}
+
+function parsePreparePromotionPlanArgs(args: unknown): PreparePromotionPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  const gates = input.gates;
+  if (!isObjectRecord(gates)) {
+    throw new ArgumentError('gates must be an object.');
+  }
+
+  const allowedStatuses = ['passed', 'failed'];
+  for (const gateName of ['staticValidation', 'sandboxExecutions', 'credentialPolicy', 'noTestArtifacts']) {
+    const status = gates[gateName];
+    if (typeof status !== 'string' || !allowedStatuses.includes(status)) {
+      throw new ArgumentError(`gates.${gateName} must be either 'passed' or 'failed'.`);
+    }
+  }
+
+  return {
+    testWorkflowId: requiredString(input.testWorkflowId, 'testWorkflowId'),
+    productionWorkflowId: optionalString(input.productionWorkflowId, 'productionWorkflowId'),
+    workflowJson: workflowJson as any,
+    gates: gates as any,
+  };
+}
+
+function parsePrepareCleanupPlanArgs(args: unknown): PrepareCleanupPlanArgs {
+  const input = objectArgs(args);
+  return {
+    sandboxWorkflowId: requiredString(input.sandboxWorkflowId, 'sandboxWorkflowId'),
   };
 }
 

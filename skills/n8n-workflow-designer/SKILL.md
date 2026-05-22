@@ -81,16 +81,60 @@ The designer implements a **Three-Layered TDD Model** that separates testing spe
 
 *   **Level 1 — Design Contract TDD**: Create a declarative test contract defining expected paths (e.g. from trigger to action nodes), expected node outputs, and forbidden credential rules (e.g. preventing hardcoded tokens).
 *   **Level 2 — Offline Structural TDD**: Statically validate the compiled workflow JSON against the contract policies, and generate localized Vitest/Jest `.test.ts` test suite files for offline pipeline runs.
-*   **Level 3 — Integration TDD**: Generate test overlay execution plans mapping mock `pinData` inputs onto triggers. Execute these in a test/sandbox n8n environment, and automatically assert the final execution outputs.
+*   **Level 3 — Sandbox Integration TDD & Repair Loop**: Deploy a sandbox test clone and execute runtime integration tests directly on the live n8n instance, evaluate outcomes, run an automated repair loop for expression/credential issues, and safely promote passing workflows to production.
 
-### TDD Execution Lifecycle
-To implement a workflow using TDD, follow this sequence:
-1.  **Generate Contract**: Call `generate_test_contract` with the natural language description/prompt.
-2.  **Design & Compile**: Design the TypeScript/JSON workflow satisfying the contract, then compile it.
-3.  **Static Validation**: Call `validate_workflow_against_contract` to check connectivity paths and secret-sniffing rules.
-4.  **Offline Test Suite**: Call `prepare_offline_test_suite` to generate a Vitest file for automated offline pipelines.
-5.  **Integration Test Plan**: Call `prepare_integration_test_plan` to construct the mock overlay.
-6.  **Execute & Evaluate**: Run the test workflow in the n8n sandbox (using `recommendedNextTool`), then call `evaluate_execution_result` on the returned execution logs to verify assertions.
+### TDD & Sandbox Execution Pipeline
+To build and verify a workflow using sandbox-guided TDD, execute the following pipeline:
+
+```
+Contract (generate_test_contract)
+   ↓
+Compile (compile_workflow)
+   ↓
+Static Validation (validate_workflow_against_contract)
+   ↓
+Sandbox Deploy (prepare_sandbox_deploy_plan)
+   ↓
+Manual/Test Execution (prepare_execution_suite)
+   ↓
+Execution Result Evaluation (evaluate_execution_result)
+   ↓
+Repair Loop (prepare_repair_patch) [if failed]
+   ↓
+Production Promotion (prepare_promotion_plan)
+   ↓
+Sandbox Cleanup (prepare_cleanup_plan)
+```
+
+### Sandbox TDD Tools
+
+#### 1. `prepare_sandbox_deploy_plan`
+Prepares a sandbox deployment plan. Under delegated mode, returns tool recommendations (e.g. `n8n_create_workflow` or `n8n_update_full_workflow`) to deploy an isolated sandbox test clone.
+- **Rules**:
+  - Name overrides: Always prefixes the workflow name with `[TEST]` and appends a suffix like `_sandbox` (or user specified `sandboxSuffix`).
+  - Active status: Always sets `active: false` (deployed clone is inactive).
+  - Tags: Automatically adds tags `["ai-generated", "test", "do-not-use-production"]` to prevent execution in production.
+
+#### 2. `prepare_execution_suite`
+Generates a suite of test case execution plans mapping the contract's inputs to run on the sandbox clone via n8n's `n8n_test_workflow` tool. Returns a set of assertions to evaluate against the logs.
+
+#### 3. `prepare_repair_patch`
+If execution fails, analyze the live run logs via `prepare_repair_patch`. It uses heuristics to diagnose errors:
+- **Missing Parameters / Invalid Expressions**: Sniffs out undefined parameter references and suggests path adjustments (e.g. `{{ $json.nested.property }}` vs `{{ $json.property }}`).
+- **Credential Errors**: Detects auth/API key errors, prompting credential checks.
+Returns a proposed patch that identifies the failing node name, node type, parameters, and a fix suggestion.
+
+#### 4. `prepare_promotion_plan`
+Promotes the sandbox workflow to a production workflow (either creating it or updating an existing one) if and only if all **Quality Gates** pass.
+- **Quality Gates** (must be `'passed'`):
+  - `staticValidation`: Static contract constraints check.
+  - `sandboxExecutions`: Live executions on sandbox pass successfully.
+  - `credentialPolicy`: Verification that credentials are not hardcoded.
+  - `noTestArtifacts`: Verification that no mock test nodes or temporary nodes are in the design.
+- **Sanitization**: Strips out the `[TEST]` prefix, `_sandbox` suffix, sets `active: true` (or user configuration), and removes test tags before returning the production deployment plan.
+
+#### 5. `prepare_cleanup_plan`
+Builds a cleanup plan containing the delete commands (e.g., calling `n8n_delete_workflow`) to remove the sandbox test clone from n8n.
 
 > [!IMPORTANT]
 > **Decoupled test overlay rule**: Never inject mock `pinData` or fake credentials directly into production workflow JSON or `prepare_deploy_plan`. Keep testing mock data isolated in the integration plan overlay.
