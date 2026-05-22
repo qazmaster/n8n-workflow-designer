@@ -192,6 +192,32 @@ export async function prepareExecutionSuite(args: PrepareExecutionSuiteArgs): Pr
   };
 }
 
+function findExpressionInParams(obj: any, varName: string, currentPath: string = 'parameters'): { path: string, value: string } | null {
+  if (typeof obj === 'string') {
+    if (obj.includes('{{') && obj.includes('}}') && obj.includes(varName)) {
+      return { path: currentPath, value: obj };
+    }
+  } else if (obj && typeof obj === 'object') {
+    for (const key in obj) {
+      const res = findExpressionInParams(obj[key], varName, `${currentPath}.${key}`);
+      if (res) return res;
+    }
+  }
+  return null;
+}
+
+function findPathInShape(obj: any, targetKey: string, currentPath: string = '$json'): string | null {
+  if (!obj || typeof obj !== 'object') return null;
+  if (obj.hasOwnProperty(targetKey)) {
+    return `${currentPath}.${targetKey}`;
+  }
+  for (const key in obj) {
+    const nested = findPathInShape(obj[key], targetKey, `${currentPath}.${key}`);
+    if (nested) return nested;
+  }
+  return null;
+}
+
 export interface PrepareRepairPatchArgs {
   workflowJson: Record<string, any>;
   executionResult: any;
@@ -202,12 +228,22 @@ export interface PrepareRepairPatchArgs {
 export interface PrepareRepairPatchResult {
   status: 'failed';
   failedNode: string;
-  errorType: string;
+  errorClass: string;
   message: string;
-  inputShape: any;
+  observedInputShape: any;
+  expectedExpression?: string;
   suspectedCause: string;
   recommendedFix: string;
-  proposedPatch?: any;
+  recommendedPatch?: {
+    type: 'update_node_parameter';
+    node: string;
+    path: string;
+    from: any;
+    to: any;
+  };
+  retestRequired: boolean;
+  autoRepairAllowed: boolean;
+  safetyReason?: string;
 }
 
 export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<PrepareRepairPatchResult> {
@@ -215,8 +251,8 @@ export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<
 
   let failedNode = failedNodeName || 'Unknown Node';
   let message = errorMessage || 'Execution failed without specific error message.';
-  let errorType = 'runtime_error';
-  let inputShape: any = null;
+  let errorClass = 'runtime_error';
+  let observedInputShape: any = null;
   let suspectedCause = 'A node execution failed during sandbox testing.';
   let recommendedFix = 'Inspect the node parameters and expressions.';
 
@@ -229,8 +265,8 @@ export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<
           if (run.error) {
             failedNode = nodeName;
             message = run.error.message || message;
-            errorType = run.error.code || 'node_failure';
-            inputShape = run.data?.main?.[0]?.[0]?.json || null;
+            errorClass = run.error.code || 'node_failure';
+            observedInputShape = run.data?.main?.[0]?.[0]?.json || null;
             break;
           }
         }
@@ -239,40 +275,192 @@ export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<
   }
 
   const lowerMsg = message.toLowerCase();
+  let expectedExpression: string | undefined;
+  let recommendedPatch: {
+    type: 'update_node_parameter';
+    node: string;
+    path: string;
+    from: any;
+    to: any;
+  } | undefined;
+
+  const nodes = workflowJson.nodes || [];
+  const targetNode = nodes.find((n: any) => n.name === failedNode);
+
   if (lowerMsg.includes('is not defined') || lowerMsg.includes('undefined') || lowerMsg.includes('cannot read property')) {
-    errorType = 'missing_parameter_or_invalid_expression';
+    errorClass = 'expression_input_shape_mismatch';
     suspectedCause = `An expression references a parameter or path that does not exist in the incoming input stream.`;
     recommendedFix = `Check the input shape of the node "${failedNode}". If previous node outputs nesting, update the expression path (e.g. use '{{ $json.nested.property }}' instead of '{{ $json.property }}').`;
+
+    let varName = '';
+    const match = message.match(/(?:property|variable|field)?\s*'?([a-zA-Z0-9_$]+)'?\s+is not defined/i)
+               || message.match(/cannot read property\s*'?([a-zA-Z0-9_$]+)'?/i);
+    if (match) {
+      varName = match[1];
+    }
+
+    if (targetNode && varName) {
+      const expr = findExpressionInParams(targetNode.parameters, varName);
+      if (expr) {
+        expectedExpression = expr.value;
+        const actualNestedPath = findPathInShape(observedInputShape, varName);
+        if (actualNestedPath) {
+          recommendedPatch = {
+            type: 'update_node_parameter',
+            node: failedNode,
+            path: expr.path,
+            from: expr.value,
+            to: `{{ ${actualNestedPath} }}`
+          };
+        }
+      }
+    }
   } else if (lowerMsg.includes('credential') || lowerMsg.includes('auth') || lowerMsg.includes('unauthorized') || lowerMsg.includes('api key')) {
-    errorType = 'credential_error';
+    errorClass = 'credential_configuration_error';
     suspectedCause = `Authentication or credential verification failed for node "${failedNode}".`;
     recommendedFix = `Verify that the required credentials are correctly linked in the node settings. Ensure credentials are not hardcoded in parameters.`;
   }
 
-  const nodes = workflowJson.nodes || [];
-  const targetNode = nodes.find((n: any) => n.name === failedNode);
-  let proposedPatch: any = null;
+  const forbiddenKeywords = ['credential', 'auth', 'api key', 'token', 'password', 'secret'];
+  const isCredentialError = errorClass === 'credential_configuration_error' || forbiddenKeywords.some(kw => message.toLowerCase().includes(kw));
 
-  if (targetNode) {
-    proposedPatch = {
-      nodeName: failedNode,
-      nodeType: targetNode.type,
-      currentParameters: targetNode.parameters || {},
-      suggestedFix: `Update expressions referencing missing properties in parameters.`,
-    };
+  let autoRepairAllowed = true;
+  let safetyReason: string | undefined;
+
+  if (isCredentialError) {
+    autoRepairAllowed = false;
+    safetyReason = 'Auto-repair is forbidden for credential/authentication issues without manual configuration.';
   }
 
   return {
     status: 'failed',
     failedNode,
-    errorType,
+    errorClass,
     message,
-    inputShape,
+    observedInputShape,
+    expectedExpression,
     suspectedCause,
     recommendedFix,
-    proposedPatch,
+    recommendedPatch,
+    retestRequired: true,
+    autoRepairAllowed,
+    safetyReason,
   };
 }
+
+export interface ApplyRepairPatchArgs {
+  workflowJson: Record<string, any>;
+  patch: {
+    node: string;
+    path: string;
+    to: any;
+  };
+}
+
+export interface ApplyRepairPatchResult {
+  workflowJson: Record<string, any>;
+  success: boolean;
+  message: string;
+}
+
+function setValueAtPath(obj: any, path: string, value: any) {
+  const parts = path.split('.');
+  let current = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (!(part in current)) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
+export async function applyRepairPatch(args: ApplyRepairPatchArgs): Promise<ApplyRepairPatchResult> {
+  const { workflowJson, patch } = args;
+  if (!workflowJson) {
+    throw new Error('apply_repair_patch requires workflowJson.');
+  }
+  if (!patch || !patch.node || !patch.path) {
+    throw new Error('apply_repair_patch requires a valid patch with node and path properties.');
+  }
+
+  const cleanWorkflow = JSON.parse(JSON.stringify(workflowJson));
+  const nodes = cleanWorkflow.nodes || [];
+  const targetNode = nodes.find((n: any) => n.name === patch.node);
+
+  if (!targetNode) {
+    return {
+      workflowJson,
+      success: false,
+      message: `Node "${patch.node}" not found in workflow.`
+    };
+  }
+
+  setValueAtPath(targetNode, patch.path, patch.to);
+
+  return {
+    workflowJson: cleanWorkflow,
+    success: true,
+    message: `Successfully applied patch to node "${patch.node}" parameter "${patch.path}".`
+  };
+}
+
+export interface PrepareRetestPlanArgs {
+  sandboxWorkflowId: string;
+  workflowJson: Record<string, any>;
+}
+
+export interface PrepareRetestPlanResult {
+  mode: 'delegated';
+  recommendedMcpTool: string;
+  recommendedMcpArguments: Record<string, any>;
+  recommendedNextTool: string;
+  requiredTools: string[];
+  instructions: string;
+  workflowName: string;
+  sanitizedWorkflowJson: Record<string, any>;
+}
+
+export async function prepareRetestPlan(args: PrepareRetestPlanArgs): Promise<PrepareRetestPlanResult> {
+  const { sandboxWorkflowId, workflowJson } = args;
+  if (!sandboxWorkflowId) {
+    throw new Error('prepare_retest_plan requires sandboxWorkflowId.');
+  }
+  if (!workflowJson) {
+    throw new Error('prepare_retest_plan requires workflowJson.');
+  }
+
+  const recommendedMcpTool = 'n8n_update_full_workflow';
+  const recommendedMcpArguments = {
+    id: sandboxWorkflowId,
+    name: workflowJson.name || 'Test Workflow',
+    nodes: workflowJson.nodes || [],
+    connections: workflowJson.connections || {},
+    settings: workflowJson.settings || {},
+    intent: `Retest patched sandbox workflow clone ${sandboxWorkflowId}`
+  };
+
+  const requiredTools = ['n8n_update_full_workflow', 'n8n_test_workflow'];
+  const recommendedNextTool = 'n8n_update_full_workflow';
+
+  const instructions = `Deploy the patched workflow to the sandbox clone using czlonkowski/n8n-mcp:\n` +
+    `1. Call n8n_update_full_workflow with ID "${sandboxWorkflowId}" and the recommended arguments.\n` +
+    `2. Rerun the execution test suite using prepare_execution_suite.\n\n` +
+    `CRITICAL: Before calling the recommended tool, check if the required n8n-mcp tools (${requiredTools.join(', ')}) are configured and available in your environment. If they are missing or if the backend cannot be reached, STOP immediately and ask the user to configure or connect their n8n-mcp server.`;
+
+  return {
+    mode: 'delegated',
+    recommendedMcpTool,
+    recommendedMcpArguments,
+    recommendedNextTool,
+    requiredTools,
+    instructions,
+    workflowName: workflowJson.name || 'Test Workflow',
+    sanitizedWorkflowJson: workflowJson
+  };
+}
+
 
 export interface PreparePromotionPlanArgs {
   testWorkflowId: string;

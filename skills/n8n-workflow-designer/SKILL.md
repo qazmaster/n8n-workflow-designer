@@ -122,9 +122,15 @@ Generates a suite of test case execution plans mapping the contract's inputs to 
 If execution fails, analyze the live run logs via `prepare_repair_patch`. It uses heuristics to diagnose errors:
 - **Missing Parameters / Invalid Expressions**: Sniffs out undefined parameter references and suggests path adjustments (e.g. `{{ $json.nested.property }}` vs `{{ $json.property }}`).
 - **Credential Errors**: Detects auth/API key errors, prompting credential checks.
-Returns a proposed patch that identifies the failing node name, node type, parameters, and a fix suggestion.
+Returns a structured diagnosis detailing the failing node, error class, observed input shape, expected expression, suspected cause, recommended patch, retest required status, and auto-repair allowance.
 
-#### 4. `prepare_promotion_plan`
+#### 4. `apply_repair_patch`
+Programmatically applies a recommended patch containing a specific node and dotted parameter path modification directly to the workflow JSON.
+
+#### 5. `prepare_retest_plan`
+Generates a delegated update and retest plan (e.g., calling `n8n_update_full_workflow`) to redeploy the patched workflow JSON to the sandbox clone before re-running the execution test suite.
+
+#### 6. `prepare_promotion_plan`
 Promotes the sandbox workflow to a production workflow (either creating it or updating an existing one) if and only if all **Quality Gates** pass.
 - **Quality Gates** (must be `'passed'`):
   - `staticValidation`: Static contract constraints check.
@@ -133,11 +139,30 @@ Promotes the sandbox workflow to a production workflow (either creating it or up
   - `noTestArtifacts`: Verification that no mock test nodes or temporary nodes are in the design.
 - **Sanitization**: Strips out the `[TEST]` prefix, `_sandbox` suffix, sets `active: true` (or user configuration), and removes test tags before returning the production deployment plan.
 
-#### 5. `prepare_cleanup_plan`
+#### 7. `prepare_cleanup_plan`
 Builds a cleanup plan containing the delete commands (e.g., calling `n8n_delete_workflow`) to remove the sandbox test clone from n8n.
+
+### Runtime-TDD Mode Guidelines
+
+1. Never assume static validation is enough.
+2. After sandbox deploy, run execution tests through n8n-mcp.
+3. Always read execution result before proposing fixes.
+4. Convert execution failure into structured diagnosis.
+5. Generate minimal repair patch.
+6. Apply patch only to workflow artifact or sandbox clone.
+7. Re-run validation and sandbox execution.
+8. Stop after repair budget is exhausted.
+9. Never mutate or activate production automatically.
+10. Promotion to production requires passed static validation, passed sandbox executions, no test artifacts, and explicit confirmation.
+
+### Auto-Repair Safety Policy
+
+- **Allowed fixes**: expression path fixes, Set node normalization, IF/Switch condition correction, missing field mapping, node parameter correction, connection/branch fixes, retry/error branch additions.
+- **Forbidden without confirmation**: adding real credentials, changing production workflow, activating workflow, deleting nodes with external effects, changing external API targets, replacing business logic, sending real messages/payments/CRM actions.
 
 > [!IMPORTANT]
 > **Decoupled test overlay rule**: Never inject mock `pinData` or fake credentials directly into production workflow JSON or `prepare_deploy_plan`. Keep testing mock data isolated in the integration plan overlay.
+
 
 ## Workflow Design Process
 

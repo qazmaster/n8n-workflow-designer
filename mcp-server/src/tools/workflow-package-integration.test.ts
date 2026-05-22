@@ -27,6 +27,8 @@ import {
   prepareRepairPatch,
   preparePromotionPlan,
   prepareCleanupPlan,
+  applyRepairPatch,
+  prepareRetestPlan,
 } from './sandbox.js';
 
 afterEach(() => {
@@ -1073,7 +1075,22 @@ export class TSWorkflow {
       expect(suite.testCases[0].assertions[0].nodeName).toBe('Bitrix24 CRM');
     });
 
-    it('prepare_repair_patch diagnoses expression errors', async () => {
+    it('prepare_repair_patch diagnoses expression errors and auto-detects fix', async () => {
+      const testWorkflow = {
+        name: 'Intake Workflow',
+        nodes: [
+          {
+            name: 'Bitrix24 CRM',
+            type: 'n8n-nodes-base.bitrix24',
+            parameters: {
+              leadName: '{{ $json.Alice }}'
+            }
+          }
+        ],
+        connections: {},
+        settings: {}
+      };
+
       const executionResult = {
         data: {
           resultData: {
@@ -1085,7 +1102,44 @@ export class TSWorkflow {
                     code: 'expression_error'
                   },
                   data: {
-                    main: [[{ json: { inputField: 'Alice' } }]]
+                    main: [[{ json: { contact: { Alice: 'Alice' } } }]]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      };
+
+      const patch = await prepareRepairPatch({
+        workflowJson: testWorkflow,
+        executionResult
+      });
+
+      expect(patch.status).toBe('failed');
+      expect(patch.failedNode).toBe('Bitrix24 CRM');
+      expect(patch.errorClass).toBe('expression_input_shape_mismatch');
+      expect(patch.suspectedCause).toContain('expression references a parameter');
+      expect(patch.autoRepairAllowed).toBe(true);
+      expect(patch.recommendedPatch).toBeDefined();
+      expect(patch.recommendedPatch?.path).toBe('parameters.leadName');
+      expect(patch.recommendedPatch?.from).toBe('{{ $json.Alice }}');
+      expect(patch.recommendedPatch?.to).toBe('{{ $json.contact.Alice }}');
+    });
+
+    it('prepare_repair_patch blocks auto-repair on credential errors', async () => {
+      const executionResult = {
+        data: {
+          resultData: {
+            runData: {
+              'Bitrix24 CRM': [
+                {
+                  error: {
+                    message: 'Invalid API credentials provided',
+                    code: 'credential_error'
+                  },
+                  data: {
+                    main: [[{ json: {} }]]
                   }
                 }
               ]
@@ -1100,11 +1154,64 @@ export class TSWorkflow {
       });
 
       expect(patch.status).toBe('failed');
-      expect(patch.failedNode).toBe('Bitrix24 CRM');
-      expect(patch.errorType).toBe('missing_parameter_or_invalid_expression');
-      expect(patch.suspectedCause).toContain('expression references a parameter');
-      expect(patch.proposedPatch.nodeType).toBe('n8n-nodes-base.bitrix24');
+      expect(patch.errorClass).toBe('credential_configuration_error');
+      expect(patch.autoRepairAllowed).toBe(false);
+      expect(patch.safetyReason).toContain('forbidden');
     });
+
+    it('apply_repair_patch applies node parameter modification', async () => {
+      const testWorkflow = {
+        name: 'Intake Workflow',
+        nodes: [
+          {
+            name: 'Bitrix24 CRM',
+            type: 'n8n-nodes-base.bitrix24',
+            parameters: {
+              leadName: '{{ $json.Alice }}'
+            }
+          }
+        ]
+      };
+
+      const result = await applyRepairPatch({
+        workflowJson: testWorkflow,
+        patch: {
+          node: 'Bitrix24 CRM',
+          path: 'parameters.leadName',
+          to: '{{ $json.contact.Alice }}'
+        }
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.workflowJson.nodes[0].parameters.leadName).toBe('{{ $json.contact.Alice }}');
+    });
+
+    it('prepare_retest_plan generates update plan', async () => {
+      const testWorkflow = {
+        name: 'Intake Workflow',
+        nodes: [
+          {
+            name: 'Bitrix24 CRM',
+            type: 'n8n-nodes-base.bitrix24',
+            parameters: {
+              leadName: '{{ $json.contact.Alice }}'
+            }
+          }
+        ]
+      };
+
+      const plan = await prepareRetestPlan({
+        sandboxWorkflowId: 'sandbox-123',
+        workflowJson: testWorkflow
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.recommendedMcpTool).toBe('n8n_update_full_workflow');
+      expect(plan.recommendedMcpArguments.id).toBe('sandbox-123');
+      expect(plan.recommendedMcpArguments.nodes[0].parameters.leadName).toBe('{{ $json.contact.Alice }}');
+      expect(plan.requiredTools).toContain('n8n_update_full_workflow');
+    });
+
 
     it('prepare_promotion_plan blocks promotion if gates fail and allows if gates pass', async () => {
       const failedGatesResult = await preparePromotionPlan({

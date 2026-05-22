@@ -51,11 +51,15 @@ import {
   prepareRepairPatch,
   preparePromotionPlan,
   prepareCleanupPlan,
+  applyRepairPatch,
+  prepareRetestPlan,
   type PrepareSandboxDeployPlanArgs,
   type PrepareExecutionSuiteArgs,
   type PrepareRepairPatchArgs,
   type PreparePromotionPlanArgs,
   type PrepareCleanupPlanArgs,
+  type ApplyRepairPatchArgs,
+  type PrepareRetestPlanArgs,
 } from './tools/sandbox.js';
 
 const DEPLOY_MODE = (process.env.N8N_DESIGNER_DEPLOY_MODE || 'standalone').toLowerCase();
@@ -612,9 +616,51 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ['sandboxWorkflowId'],
         },
       },
+      {
+        name: 'apply_repair_patch',
+        description: 'Apply a recommended node parameter patch to the workflow JSON.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Workflow JSON to patch',
+            },
+            patch: {
+              type: 'object',
+              properties: {
+                node: { type: 'string', description: 'Name of the node to patch' },
+                path: { type: 'string', description: 'Path to node parameter to modify' },
+                to: { description: 'New value to set' },
+              },
+              required: ['node', 'path', 'to'],
+            },
+          },
+          required: ['workflowJson', 'patch'],
+        },
+      },
+      {
+        name: 'prepare_retest_plan',
+        description: 'Prepare a plan to deploy the patched workflow and rerun sandbox executions.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            sandboxWorkflowId: {
+              type: 'string',
+              description: 'Sandbox workflow ID',
+            },
+            workflowJson: {
+              type: 'object',
+              description: 'Patched workflow JSON',
+            },
+          },
+          required: ['sandboxWorkflowId', 'workflowJson'],
+        },
+      },
     ],
   };
 });
+
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
@@ -1037,6 +1083,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'apply_repair_patch': {
+        const result = await applyRepairPatch(parseApplyRepairPatchArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_retest_plan': {
+        const result = await prepareRetestPlan(parsePrepareRetestPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+
       default:
         throw new McpError(
           ErrorCode.MethodNotFound,
@@ -1356,6 +1427,38 @@ function parsePrepareCleanupPlanArgs(args: unknown): PrepareCleanupPlanArgs {
     sandboxWorkflowId: requiredString(input.sandboxWorkflowId, 'sandboxWorkflowId'),
   };
 }
+
+function parseApplyRepairPatchArgs(args: unknown): ApplyRepairPatchArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  const patch = input.patch;
+  if (!isObjectRecord(patch)) {
+    throw new ArgumentError('patch must be an object.');
+  }
+
+  return {
+    workflowJson: workflowJson as any,
+    patch: {
+      node: requiredString(patch.node, 'patch.node'),
+      path: requiredString(patch.path, 'patch.path'),
+      to: patch.to,
+    },
+  };
+}
+
+function parsePrepareRetestPlanArgs(args: unknown): PrepareRetestPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+
+  return {
+    sandboxWorkflowId: requiredString(input.sandboxWorkflowId, 'sandboxWorkflowId'),
+    workflowJson: workflowJson as any,
+  };
+}
+
 
 function objectArgs(args: unknown): Record<string, unknown> {
   if (args === undefined || args === null) {
