@@ -36,6 +36,195 @@ interface WorkflowNode {
   communityPackage?: string;
 }
 
+type IntentId =
+  | 'filter'
+  | 'if'
+  | 'switch'
+  | 'sort'
+  | 'limit'
+  | 'removeDuplicates'
+  | 'splitOut'
+  | 'aggregate'
+  | 'summarize'
+  | 'merge'
+  | 'compareDatasets'
+  | 'renameKeys';
+
+type IntentConflictGroup = 'conditional' | 'ordering' | 'collection' | 'combination' | 'field-operation';
+
+interface IntentRule {
+  intent: IntentId;
+  nodeType: string;
+  baseConfidence: number;
+  priority: number;
+  conflictGroup?: IntentConflictGroup;
+  exactPhrases?: readonly string[];
+  weakSignals?: readonly string[];
+  strongSignals: readonly string[];
+  supportingSignals: readonly string[];
+  negativeSignals?: readonly string[];
+}
+
+interface NodeCandidate {
+  intent: IntentId;
+  nodeType: string;
+  confidence: number;
+  priority: number;
+  matchedSignals: readonly string[];
+  supportingSignals: readonly string[];
+  conflictGroup?: IntentConflictGroup;
+  reason: string;
+}
+
+const HIGH_CONFIDENCE_THRESHOLD = 0.75;
+const MEDIUM_CONFIDENCE_THRESHOLD = 0.6;
+
+const INTENT_RULES: readonly IntentRule[] = [
+  {
+    intent: 'filter',
+    nodeType: 'n8n-nodes-base.filter',
+    baseConfidence: 0.68,
+    priority: 90,
+    conflictGroup: 'conditional',
+    strongSignals: ['filter', 'фильтр', 'оставить только', 'отфильтровать', 'исключить', 'отсеять'],
+    supportingSignals: ['only', 'active', 'paid', 'оплаченные'],
+  },
+  {
+    intent: 'if',
+    nodeType: 'n8n-nodes-base.if',
+    baseConfidence: 0.62,
+    priority: 80,
+    conflictGroup: 'conditional',
+    strongSignals: ['if', 'если', 'validate', 'check', 'проверить', 'валидация', 'проверка'],
+    supportingSignals: ['condition', 'boolean'],
+    negativeSignals: ['filter', 'оставить только'],
+  },
+  {
+    intent: 'switch',
+    nodeType: 'n8n-nodes-base.switch',
+    baseConfidence: 0.7,
+    priority: 95,
+    conflictGroup: 'conditional',
+    strongSignals: [
+      'switch', 'маршрутизировать', 'ветки', 'branching', 'route', 'routing', 'rules', 'в зависимости от',
+      'статус+paid', 'статус+expired', 'статус+error', 'статус+pending', 'статус+success', 'статус+approved', 'статус+rejected',
+      'status+paid', 'status+expired', 'status+error', 'status+pending', 'status+success', 'status+approved', 'status+rejected'
+    ],
+    supportingSignals: ['status', 'статус', 'paid', 'expired', 'error', 'pending', 'success', 'approved', 'rejected', 'ветки', 'разделить по', 'ветвление', 'route by', 'branch by', 'different paths'],
+  },
+  {
+    intent: 'sort',
+    nodeType: 'n8n-nodes-base.sort',
+    baseConfidence: 0.66,
+    priority: 80,
+    conflictGroup: 'ordering',
+    strongSignals: [
+      'sort', 'сортиров', 'отсортировать', 'упорядочить', 'order by',
+      'сравнить+цен', 'сравнить+стоимост', 'сравнить+cost', 'сравнить+price', 'сравнить+rates',
+      'compare+price', 'compare+cost', 'compare+rates'
+    ],
+    supportingSignals: ['by date', 'по дате', 'by name', 'по имени', 'best', 'cheapest', 'лучший', 'выбрать', 'select', 'дешевый', 'сравнить', 'compare'],
+  },
+  {
+    intent: 'limit',
+    nodeType: 'n8n-nodes-base.limit',
+    baseConfidence: 0.64,
+    priority: 70,
+    conflictGroup: 'ordering',
+    strongSignals: ['limit', 'лимит', 'first', 'top', 'первые', 'последние', 'ограничить количество'],
+    supportingSignals: ['last', '5 items', '10 items'],
+  },
+  {
+    intent: 'removeDuplicates',
+    nodeType: 'n8n-nodes-base.removeDuplicates',
+    baseConfidence: 0.72,
+    priority: 90,
+    conflictGroup: 'collection',
+    strongSignals: ['remove duplicates', 'dedupe', 'de-duplicate', 'дубликат', 'уникальн', 'очистить от дублей', 'убрать дубли'],
+    supportingSignals: ['unique', 'by email', 'по email'],
+  },
+  {
+    intent: 'splitOut',
+    nodeType: 'n8n-nodes-base.splitOut',
+    baseConfidence: 0.7,
+    priority: 88,
+    conflictGroup: 'collection',
+    strongSignals: [
+      'split out', 'split array', 'разбить массив', 'for each item', 'каждый элемент массива',
+      'разбить список', 'цикл по элементам', 'разбить+массив', 'разбить+список', 'разбить+товары', 'разбить+заказы', 'разбить+строки',
+      'split+array', 'split+list', 'split+items', 'split+elements', 'split+rows'
+    ],
+    supportingSignals: ['array', 'list', 'items', 'elements', 'товары', 'заказы', 'rows', 'строки таблицы', 'разбить', 'split'],
+  },
+  {
+    intent: 'aggregate',
+    nodeType: 'n8n-nodes-base.aggregate',
+    baseConfidence: 0.66,
+    priority: 76,
+    conflictGroup: 'collection',
+    strongSignals: [
+      'aggregate', 'агрегировать', 'собрать в список', 'collect to list', 'combine into array', 'группировать в список', 'group to list',
+      'объединить+текст', 'объединить+строки', 'объединить+сообщения', 'объединить+комментарии', 'объединить+письмо', 'объединить+строку',
+      'join+text', 'join+string', 'join+message', 'join+comment', 'join+email',
+      'combine+text', 'combine+string', 'combine+message', 'combine+comment', 'combine+email'
+    ],
+    supportingSignals: ['объединить', 'join', 'combine', 'текст', 'строки', 'text', 'string', 'into one string', 'в одну строку'],
+    negativeSignals: ['sum all', 'total amount', 'сумм'],
+  },
+  {
+    intent: 'summarize',
+    nodeType: 'n8n-nodes-base.summarize',
+    baseConfidence: 0.68,
+    priority: 84,
+    conflictGroup: 'collection',
+    strongSignals: [
+      'summarize', 'sum all', 'total sum', 'total amount', 'посчитать сумму',
+      'посчитать+сумму', 'calculate+sum', 'calculate+total', 'calculate+average', 'calculate+count',
+      'посчитать+среднее', 'посчитать+количество'
+    ],
+    supportingSignals: ['average', 'mean', 'count', 'сумм', 'средн', 'общее', 'посчитать', 'calculate'],
+    negativeSignals: ['per item', 'each', 'для каждого', 'комисси', 'налог', 'скидк', 'commission', 'tax', 'discount', 'прибыль', 'difference', 'построчно', 'row-by-row'],
+  },
+  {
+    intent: 'merge',
+    nodeType: 'n8n-nodes-base.merge',
+    baseConfidence: 0.66,
+    priority: 78,
+    conflictGroup: 'combination',
+    strongSignals: [
+      'merge', 'merge streams', 'join streams', 'объединить потоки', 'соединить данные',
+      'объединить+потоки', 'объединить+ветки', 'объединить+источники', 'объединить+таблицы', 'объединить+файлы', 'объединить+данные',
+      'join+streams', 'join+branches', 'join+sources', 'join+tables', 'join+files', 'join+data',
+      'combine+streams', 'combine+branches', 'combine+sources', 'combine+tables', 'combine+files', 'combine+data'
+    ],
+    supportingSignals: ['streams', 'branches', 'sources', 'tables', 'потоки', 'ветки', 'источники', 'объединить', 'join', 'combine'],
+    negativeSignals: ['aggregate', 'агрегировать', 'собрать в список', 'collect to list', 'combine into array', 'группировать в список', 'group to list'],
+  },
+  {
+    intent: 'compareDatasets',
+    nodeType: 'n8n-nodes-base.compareDatasets',
+    baseConfidence: 0.68,
+    priority: 82,
+    conflictGroup: 'combination',
+    strongSignals: [
+      'compare datasets', 'diff', 'find changes', 'сравнить данные', 'сравнить таблицы', 'сравнить два файла', 'compare two lists', 'сравнить списки',
+      'сравнить+списк', 'сравнить+таблиц', 'сравнить+файл', 'сравнить+баз', 'сравнить+данные', 'сравнить+данных',
+      'compare+datasets', 'compare+lists', 'compare+tables', 'compare+files', 'compare+data'
+    ],
+    supportingSignals: ['datasets', 'lists', 'tables', 'данные', 'таблиц', 'списк', 'сравнить', 'compare'],
+    negativeSignals: ['best', 'cheapest', 'лучший', 'цены', 'цену', 'cost', 'price', 'rates'],
+  },
+  {
+    intent: 'renameKeys',
+    nodeType: 'n8n-nodes-base.renameKeys',
+    baseConfidence: 0.72,
+    priority: 74,
+    conflictGroup: 'field-operation',
+    strongSignals: ['rename keys', 'rename fields', 'rename', 'переименовать поля', 'поменять названия полей'],
+    supportingSignals: ['field names', 'keys'],
+  },
+];
+
 interface WorkflowPlan {
   id: string;
   name: string;
@@ -244,13 +433,7 @@ function buildWorkflowPlan(args: {
     nodes.push(createHtmlCssToPdfNode(nodes.length, args.enableCommunityNodes));
   }
 
-  if (lower.includes('filter') || lower.includes('фильтр') || lower.includes('оставить только')) {
-    nodes.splice(1, 0, createFilterNode(1));
-    repositionNodes(nodes);
-  } else if (lower.includes('if') || lower.includes('если') || lower.includes('validate') || lower.includes('check')) {
-    nodes.splice(1, 0, createIfNode(1));
-    repositionNodes(nodes);
-  }
+  // Legacy inline conditional checks removed in favor of data-driven intent matching
 
   const intents = detectIntents(args.description);
 
@@ -335,93 +518,105 @@ function buildWorkflowPlan(args: {
   };
 }
 
-function detectIntents(description: string): Set<string> {
+function detectIntents(description: string): Set<IntentId> {
   const lower = description.toLowerCase();
-  const intents = new Set<string>();
+  const candidates: NodeCandidate[] = [];
 
-  const containsAny = (words: string[]) => words.some(word => lower.includes(word));
+  for (const rule of INTENT_RULES) {
+    let strongMatchCount = 0;
+    
+    // Check strong signals
+    for (const sig of rule.strongSignals) {
+      const parts = sig.split('+');
+      const allMatched = parts.every(part => lower.includes(part));
+      if (allMatched) {
+        strongMatchCount++;
+      }
+    }
 
-  // 1. Filter
-  if (containsAny(['filter', 'фильтр', 'оставить только', 'отфильтровать', 'исключить', 'отсеять'])) {
-    intents.add('filter');
+    if (strongMatchCount === 0) {
+      continue;
+    }
+
+    // Start with base confidence
+    let confidence = rule.baseConfidence;
+
+    // Boost for additional strong signals
+    if (strongMatchCount > 1) {
+      confidence += (strongMatchCount - 1) * 0.05;
+    }
+
+    // Check supporting signals
+    let supportMatchCount = 0;
+    for (const sig of rule.supportingSignals) {
+      const parts = sig.split('+');
+      const allMatched = parts.every(part => lower.includes(part));
+      if (allMatched) {
+        supportMatchCount++;
+      }
+    }
+    confidence += supportMatchCount * 0.10;
+
+    // Check negative signals
+    if (rule.negativeSignals) {
+      let negativeMatch = false;
+      for (const sig of rule.negativeSignals) {
+        const parts = sig.split('+');
+        const allMatched = parts.every(part => lower.includes(part));
+        if (allMatched) {
+          negativeMatch = true;
+          break;
+        }
+      }
+      if (negativeMatch) {
+        confidence = 0;
+      }
+    }
+
+    // Clamp confidence to [0, 1]
+    confidence = Math.min(Math.max(confidence, 0), 1.0);
+
+    if (confidence >= MEDIUM_CONFIDENCE_THRESHOLD) {
+      candidates.push({
+        intent: rule.intent,
+        nodeType: rule.nodeType,
+        confidence,
+        priority: rule.priority,
+        matchedSignals: rule.strongSignals.filter(sig => sig.split('+').every(part => lower.includes(part))),
+        supportingSignals: rule.supportingSignals.filter(sig => sig.split('+').every(part => lower.includes(part))),
+        conflictGroup: rule.conflictGroup,
+        reason: `Matched strong signals [${rule.strongSignals.filter(sig => sig.split('+').every(part => lower.includes(part))).join(', ')}] with confidence ${confidence.toFixed(2)}`,
+      });
+    }
   }
 
-  // 2. If
-  if (containsAny(['if', 'если', 'validate', 'check', 'проверить', 'валидация', 'проверка'])) {
-    intents.add('if');
+  // Group by conflictGroup and select the winner of each group
+  const grouped = new Map<string, NodeCandidate[]>();
+  const nonConflicting: NodeCandidate[] = [];
+
+  for (const cand of candidates) {
+    if (cand.conflictGroup) {
+      const list = grouped.get(cand.conflictGroup) || [];
+      list.push(cand);
+      grouped.set(cand.conflictGroup, list);
+    } else {
+      nonConflicting.push(cand);
+    }
   }
 
-  // 3. Switch (route_by_multiple_statuses)
-  const isSwitch = containsAny(['switch', 'маршрутизировать', 'ветки', 'branching', 'routing', 'rules', 'в зависимости от']) ||
-    (containsAny(['статус', 'status']) && (
-      containsAny(['paid', 'expired', 'error', 'pending', 'success', 'approved', 'rejected']) ||
-      containsAny(['разделить по', 'ветвление', 'route by', 'branch by', 'different paths'])
-    ));
-  if (isSwitch) {
-    intents.add('switch');
+  const winners: NodeCandidate[] = [...nonConflicting];
+
+  for (const [_, list] of grouped.entries()) {
+    list.sort((a, b) => {
+      if (Math.abs(a.confidence - b.confidence) > 0.001) {
+        return b.confidence - a.confidence;
+      }
+      return b.priority - a.priority;
+    });
+    winners.push(list[0]);
   }
 
-  // 4. Sort
-  const isSort = containsAny(['sort', 'сортиров', 'отсортировать', 'упорядочить', 'order by']) ||
-    (containsAny(['сравнить', 'compare']) && containsAny(['цены', 'стоимость', 'цену', 'cost', 'price', 'rates']) && containsAny(['лучший', 'выбрать', 'select', 'best', 'cheapest', 'дешевый']));
-  if (isSort) {
-    intents.add('sort');
-  }
-
-  // 5. Limit
-  if (containsAny(['limit', 'лимит', 'первые', 'last', 'first', 'top', 'последние', 'ограничить количество'])) {
-    intents.add('limit');
-  }
-
-  // 6. Remove Duplicates (deduplicate_by_field)
-  if (containsAny(['remove duplicates', 'dedupe', 'дубликат', 'уникальн', 'de-duplicate', 'очистить от дублей', 'убрать дубли'])) {
-    intents.add('removeDuplicates');
-  }
-
-  // 7. Split Out (split array items)
-  const isSplitOut = containsAny(['split out', 'каждый элемент массива', 'for each item', 'split array', 'разбить массив', 'разбить список', 'цикл по элементам']) ||
-    (containsAny(['разбить', 'split']) && containsAny(['массив', 'список', 'array', 'list', 'items', 'elements', 'товары', 'заказы', 'rows', 'строки таблицы']));
-  if (isSplitOut) {
-    intents.add('splitOut');
-  }
-
-  // 8. Aggregate (collect_many_items_to_list or concatenate_text)
-  const isAggregate = containsAny(['aggregate', 'агрегировать', 'собрать в список', 'collect to list', 'combine into array', 'группировать в список', 'group to list']) ||
-    (containsAny(['объединить', 'join', 'combine']) && containsAny(['текст', 'строки', 'сообщения', 'комментарии', 'в одно письмо', 'в одну строку', 'text', 'string', 'message', 'comment', 'into one email', 'into one string']));
-  if (isAggregate) {
-    intents.add('aggregate');
-  }
-
-  // 9. Summarize (aggregate_many_items_to_metric)
-  const isSummarize = (containsAny(['summarize', 'сумм', 'средн', 'average', 'mean', 'total sum', 'total amount']) ||
-    (containsAny(['посчитать', 'calculate', 'count']) && !containsAny(['для каждого', 'каждого', 'each', 'построчно', 'row-by-row']))) &&
-    (!containsAny(['комисси', 'налог', 'скидк', 'commission', 'tax', 'discount', 'прибыль', 'difference']) || containsAny(['сумм', 'total', 'average', 'count', 'общее']));
-  if (isSummarize) {
-    intents.add('summarize');
-  }
-
-  // 10. Merge (join_two_input_streams)
-  const isMerge = (containsAny(['merge', 'объединить потоки', 'соединить данные', 'join streams', 'merge streams', 'combine streams']) ||
-    (containsAny(['объединить', 'join', 'combine']) && containsAny(['потоки', 'ветки', 'источники', 'таблицы', 'файлы', 'данные из', 'streams', 'branches', 'sources', 'tables', 'files', 'data from']))) &&
-    !isAggregate;
-  if (isMerge) {
-    intents.add('merge');
-  }
-
-  // 11. Compare Datasets
-  const isCompareDatasets = (containsAny(['compare datasets', 'найти изменения', 'diff', 'find changes', 'сравнить списки', 'сравнить таблицы', 'сравнить два файла', 'compare two lists', 'сравнить данные']) ||
-    (containsAny(['сравнить', 'compare']) && containsAny(['списк', 'таблиц', 'файл', 'баз', 'datasets', 'lists', 'tables', 'данные', 'данных']))) &&
-    !isSort;
-  if (isCompareDatasets) {
-    intents.add('compareDatasets');
-  }
-
-  // 12. Rename Keys
-  if (containsAny(['rename', 'переименовать поля', 'rename keys', 'rename fields', 'поменять названия полей'])) {
-    intents.add('renameKeys');
-  }
-
-  return intents;
+  return new Set(winners.map(w => w.intent));
 }
 
 function applyNodeSettingsHeuristics(nodes: WorkflowNode[], description: string): void {
@@ -600,7 +795,7 @@ function needsSetTransform(lower: string): boolean {
   // calculate field per item intent
   if (
     (lower.includes('посчитать') || lower.includes('вычислить') || lower.includes('calculate')) &&
-    (lower.includes('для каждого') || lower.includes('каждого') || lower.includes('each') || lower.includes('построчно') || lower.includes('row-by-row'))
+    (lower.includes('для каждого') || lower.includes('каждого') || lower.includes('each') || lower.includes('per item') || lower.includes('построчно') || lower.includes('row-by-row'))
   ) {
     return true;
   }
@@ -1371,7 +1566,7 @@ function createCodeNode(index: number, language: 'js' | 'python' = 'js'): Workfl
 
 function shouldAllowCodeNode(task: string): boolean {
   const intents = detectIntents(task);
-  const forbiddenIntents = [
+  const forbiddenIntents: IntentId[] = [
     'filter',
     'if',
     'switch',

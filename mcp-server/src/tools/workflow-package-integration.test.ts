@@ -827,6 +827,77 @@ export class DeprecatedNodesWorkflow {
       expect(types).toContain('n8n-nodes-base.code');
     });
 
+    it('selects intended built-in nodes for data-operation intents without falling back to Code', async () => {
+      const cases = [
+        {
+          description: 'Manual trigger, then dedupe customers by email',
+          workflowName: 'Intent Dedupe Builtin',
+          expectedTypes: ['n8n-nodes-base.removeDuplicates'],
+          rejectedTypes: ['n8n-nodes-base.code'],
+        },
+        {
+          description: 'Manual trigger, then sort orders by created date',
+          workflowName: 'Intent Sort Builtin',
+          expectedTypes: ['n8n-nodes-base.sort'],
+          rejectedTypes: ['n8n-nodes-base.code'],
+        },
+        {
+          description: 'Manual trigger, then split array of line items',
+          workflowName: 'Intent Split Array Builtin',
+          expectedTypes: ['n8n-nodes-base.splitOut'],
+          rejectedTypes: ['n8n-nodes-base.code'],
+        },
+        {
+          description: 'Manual trigger, then sum all orders',
+          workflowName: 'Intent Sum Orders Builtin',
+          expectedTypes: ['n8n-nodes-base.summarize'],
+          rejectedTypes: ['n8n-nodes-base.code'],
+        },
+        {
+          description: 'Manual trigger, then calculate margin field per item',
+          workflowName: 'Intent Per Item Calculation Builtin',
+          expectedTypes: ['n8n-nodes-base.set'],
+          rejectedTypes: ['n8n-nodes-base.summarize'],
+        },
+        {
+          description: 'Manual trigger, then route paid, expired, and error orders',
+          workflowName: 'Intent Route Statuses Builtin',
+          expectedTypes: ['n8n-nodes-base.switch'],
+          rejectedTypes: ['n8n-nodes-base.code'],
+        },
+        {
+          description: 'Manual trigger, then filter active paid orders only',
+          workflowName: 'Intent Filter Builtin',
+          expectedTypes: ['n8n-nodes-base.filter'],
+          rejectedTypes: ['n8n-nodes-base.code'],
+        },
+        {
+          description: 'Manual trigger, then merge streams from CRM and billing',
+          workflowName: 'Intent Merge Streams Builtin',
+          expectedTypes: ['n8n-nodes-base.merge'],
+          rejectedTypes: ['n8n-nodes-base.code'],
+        },
+      ];
+
+      for (const item of cases) {
+        const code = await designWorkflow({
+          description: item.description,
+          workflowName: item.workflowName,
+          includeErrorHandling: false,
+        });
+
+        const compiled = await compileWorkflow({ typescriptCode: code });
+        const types = compiled.nodes.map(n => n.type);
+
+        for (const expectedType of item.expectedTypes) {
+          expect(types).toContain(expectedType);
+        }
+        for (const rejectedType of item.rejectedTypes) {
+          expect(types).not.toContain(rejectedType);
+        }
+      }
+    });
+
     it('correctly maps intents to built-in nodes and rejects false-positive node types', async () => {
       // 1. dedupe -> Remove Duplicates, no Code
       const codeDedupe = await designWorkflow({
