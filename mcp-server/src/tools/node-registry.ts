@@ -244,6 +244,54 @@ export const NODE_REGISTRY: Record<string, NodeRegistryEntry> = {
     type: 'n8n-nodes-base.executeWorkflowTrigger',
     label: 'Execute Workflow Trigger',
   },
+  'n8n-nodes-base.if': {
+    type: 'n8n-nodes-base.if',
+    label: 'If',
+  },
+  'n8n-nodes-base.switch': {
+    type: 'n8n-nodes-base.switch',
+    label: 'Switch',
+  },
+  'n8n-nodes-base.filter': {
+    type: 'n8n-nodes-base.filter',
+    label: 'Filter',
+  },
+  'n8n-nodes-base.removeDuplicates': {
+    type: 'n8n-nodes-base.removeDuplicates',
+    label: 'Remove Duplicates',
+  },
+  'n8n-nodes-base.sort': {
+    type: 'n8n-nodes-base.sort',
+    label: 'Sort',
+  },
+  'n8n-nodes-base.splitOut': {
+    type: 'n8n-nodes-base.splitOut',
+    label: 'Split Out',
+  },
+  'n8n-nodes-base.summarize': {
+    type: 'n8n-nodes-base.summarize',
+    label: 'Summarize',
+  },
+  'n8n-nodes-base.aggregate': {
+    type: 'n8n-nodes-base.aggregate',
+    label: 'Aggregate',
+  },
+  'n8n-nodes-base.limit': {
+    type: 'n8n-nodes-base.limit',
+    label: 'Limit',
+  },
+  'n8n-nodes-base.merge': {
+    type: 'n8n-nodes-base.merge',
+    label: 'Merge',
+  },
+  'n8n-nodes-base.compareDatasets': {
+    type: 'n8n-nodes-base.compareDatasets',
+    label: 'Compare Datasets',
+  },
+  'n8n-nodes-base.set': {
+    type: 'n8n-nodes-base.set',
+    label: 'Set',
+  },
 };
 
 export function credentialRequirementsFor(type: string): string[] {

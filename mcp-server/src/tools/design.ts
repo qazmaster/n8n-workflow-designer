@@ -244,14 +244,70 @@ function buildWorkflowPlan(args: {
     nodes.push(createHtmlCssToPdfNode(nodes.length, args.enableCommunityNodes));
   }
 
-  if (lower.includes('filter') || lower.includes('validate') || lower.includes('check')) {
+  if (lower.includes('filter') || lower.includes('фильтр') || lower.includes('оставить только')) {
+    nodes.splice(1, 0, createFilterNode(1));
+    repositionNodes(nodes);
+  } else if (lower.includes('if') || lower.includes('если') || lower.includes('validate') || lower.includes('check')) {
     nodes.splice(1, 0, createIfNode(1));
     repositionNodes(nodes);
+  }
+
+  if (lower.includes('switch') || lower.includes('статус') || lower.includes('ветки') || lower.includes('маршрутизировать')) {
+    nodes.push(createSwitchNode(nodes.length));
+  }
+
+  if (lower.includes('sort') || lower.includes('сортиров') || lower.includes('отсортировать')) {
+    nodes.push(createSortNode(nodes.length));
+  }
+
+  if (lower.includes('limit') || lower.includes('лимит') || lower.includes('первые')) {
+    nodes.push(createLimitNode(nodes.length));
+  }
+
+  if (lower.includes('remove duplicates') || lower.includes('dedupe') || lower.includes('дубликат') || lower.includes('уникальн')) {
+    nodes.push(createRemoveDuplicatesNode(nodes.length));
+  }
+
+  if (lower.includes('split out') || lower.includes('разбить массив') || lower.includes('каждый элемент массива')) {
+    nodes.push(createSplitOutNode(nodes.length));
+  }
+
+  if (lower.includes('aggregate') || lower.includes('агрегировать') || lower.includes('собрать в список')) {
+    nodes.push(createAggregateNode(nodes.length));
+  }
+
+  if (lower.includes('summarize') || lower.includes('посчитать') || lower.includes('сумм') || lower.includes('средн')) {
+    nodes.push(createSummarizeNode(nodes.length));
+  }
+
+  if (lower.includes('merge') || lower.includes('объединить потоки') || lower.includes('соединить данные') || lower.includes('join')) {
+    nodes.push(createMergeNode(nodes.length));
+  }
+
+  if (lower.includes('compare datasets') || lower.includes('сравнить данные') || lower.includes('найти изменения') || lower.includes('diff')) {
+    nodes.push(createCompareDatasetsNode(nodes.length));
+  }
+
+  if (lower.includes('rename') || lower.includes('переименовать поля') || lower.includes('rename keys')) {
+    nodes.push(createRenameKeysNode(nodes.length));
+  }
+
+  if (lower.includes('code node') || lower.includes('javascript') || lower.includes('python') || lower.includes('run script')) {
+    if (shouldAllowCodeNode(args.description)) {
+      const isPython = lower.includes('python');
+      nodes.push(createCodeNode(nodes.length, isPython ? 'python' : 'js'));
+    } else {
+      if (!nodes.some((node) => node.type === 'n8n-nodes-base.set')) {
+        nodes.push(createSetNode(nodes.length));
+      }
+    }
   }
 
   if (nodes.filter((node) => node.role === 'main').length === 1) {
     nodes.push(createSetNode(nodes.length));
   }
+
+  repositionNodes(nodes);
 
   applyNodeSettingsHeuristics(nodes, args.description);
   addStickyNotes(nodes, args.description, args.name);
@@ -967,6 +1023,271 @@ function createIfNode(index: number): WorkflowNode {
   };
 }
 
+function createFilterNode(index: number): WorkflowNode {
+  return {
+    id: 'node-filter',
+    name: 'Filter Items',
+    type: 'n8n-nodes-base.filter',
+    version: 2,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      conditions: {
+        options: { caseSensitive: true, leftValue: '', typeValidation: 'strict' },
+        conditions: [
+          {
+            id: 'condition-filter',
+            leftValue: '={{ $json.active }}',
+            rightValue: true,
+            operator: { type: 'boolean', operation: 'true' },
+          },
+        ],
+        combinator: 'and',
+      },
+    },
+  };
+}
+
+function createSortNode(index: number): WorkflowNode {
+  return {
+    id: 'node-sort',
+    name: 'Sort Items',
+    type: 'n8n-nodes-base.sort',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      sortFields: {
+        sortFields: [
+          {
+            fieldName: 'id',
+            order: 'ascending',
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createLimitNode(index: number): WorkflowNode {
+  return {
+    id: 'node-limit',
+    name: 'Limit Items',
+    type: 'n8n-nodes-base.limit',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      maxItems: 10,
+    },
+  };
+}
+
+function createRemoveDuplicatesNode(index: number): WorkflowNode {
+  return {
+    id: 'node-remove-duplicates',
+    name: 'Remove Duplicates',
+    type: 'n8n-nodes-base.removeDuplicates',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      compare: 'selectedFields',
+      fieldsToCompare: {
+        fields: [
+          {
+            fieldName: 'id',
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createSplitOutNode(index: number): WorkflowNode {
+  return {
+    id: 'node-split-out',
+    name: 'Split Out Items',
+    type: 'n8n-nodes-base.splitOut',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      fieldToSplitOut: 'items',
+      options: {},
+    },
+  };
+}
+
+function createAggregateNode(index: number): WorkflowNode {
+  return {
+    id: 'node-aggregate',
+    name: 'Aggregate Items',
+    type: 'n8n-nodes-base.aggregate',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      aggregateAs: 'list',
+      fieldsToAggregate: {
+        fieldToAggregate: [
+          {
+            fieldToAggregate: 'id',
+            renameField: false,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createSummarizeNode(index: number): WorkflowNode {
+  return {
+    id: 'node-summarize',
+    name: 'Summarize Items',
+    type: 'n8n-nodes-base.summarize',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      fieldsToSummarize: {
+        columns: [
+          {
+            aggregation: 'sum',
+            field: 'price',
+            renameField: false,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createMergeNode(index: number): WorkflowNode {
+  return {
+    id: 'node-merge',
+    name: 'Merge Streams',
+    type: 'n8n-nodes-base.merge',
+    version: 3,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      mode: 'combine',
+      combinationMode: 'mergeByPosition',
+    },
+  };
+}
+
+function createCompareDatasetsNode(index: number): WorkflowNode {
+  return {
+    id: 'node-compare-datasets',
+    name: 'Compare Datasets',
+    type: 'n8n-nodes-base.compareDatasets',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      mergeKey: 'id',
+    },
+  };
+}
+
+function createRenameKeysNode(index: number): WorkflowNode {
+  return {
+    id: 'node-rename-keys',
+    name: 'Rename Keys',
+    type: 'n8n-nodes-base.renameKeys',
+    version: 1,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      keys: {
+        key: [
+          {
+            currentKey: 'oldKey',
+            newKey: 'newKey',
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createSwitchNode(index: number): WorkflowNode {
+  return {
+    id: 'node-switch',
+    name: 'Switch Routing',
+    type: 'n8n-nodes-base.switch',
+    version: 2,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      dataType: 'string',
+      rules: {
+        rules: [
+          {
+            value: 'paid',
+            output: 0,
+          },
+          {
+            value: 'pending',
+            output: 1,
+          },
+        ],
+      },
+    },
+  };
+}
+
+function createCodeNode(index: number, language: 'js' | 'python' = 'js'): WorkflowNode {
+  return {
+    id: 'node-code',
+    name: 'Run Custom Script',
+    type: 'n8n-nodes-base.code',
+    version: 2,
+    position: positionFor(index),
+    role: 'main',
+    config: {
+      language: language === 'python' ? 'python' : 'javascript',
+      jsCode: '// Write your custom logic here\nreturn items;',
+      pythonCode: '# Write your custom logic here\nreturn items',
+    },
+  };
+}
+
+function shouldAllowCodeNode(task: string): boolean {
+  const lower = task.toLowerCase();
+
+  const noCodePatterns = [
+    'filter',
+    'фильтр',
+    'sort',
+    'сортиров',
+    'limit',
+    'лимит',
+    'duplicates',
+    'дубликат',
+    'split',
+    'разбить',
+    'aggregate',
+    'агрег',
+    'summarize',
+    'посчитать',
+    'merge',
+    'объединить',
+    'rename',
+    'переименовать',
+  ];
+
+  const isCommonTransformation = noCodePatterns.some(pattern => lower.includes(pattern));
+
+  if (isCommonTransformation) {
+    return false;
+  }
+
+  return true;
+}
+
 function generateWorkflowCode(
   plan: WorkflowPlan,
   description: string,
@@ -1337,6 +1658,18 @@ function getNodePurpose(node: WorkflowNode): string {
   if (type.includes('microsoftTeams')) return 'Sends notifications and chat messages to MS Teams channels.';
   if (type.includes('telegram')) return 'Sends alert messages to a Telegram chat or channel.';
   if (type.includes('if')) return 'Validates inputs and splits the execution path based on conditions.';
+  if (type.includes('filter')) return 'Filters items in the list based on specific conditions.';
+  if (type.includes('removeDuplicates')) return 'Removes duplicate items from the list based on specific fields.';
+  if (type.includes('sort')) return 'Sorts items in the list based on specific fields and direction.';
+  if (type.includes('splitOut')) return 'Splits a nested array within each item into separate items.';
+  if (type.includes('aggregate')) return 'Aggregates fields from multiple items into a single list or object.';
+  if (type.includes('summarize')) return 'Calculates sum, average, count, min, or max across multiple items.';
+  if (type.includes('limit')) return 'Limits the number of items that pass through to the next nodes.';
+  if (type.includes('merge')) return 'Merges data streams from different inputs together.';
+  if (type.includes('compareDatasets')) return 'Compares two datasets to find new, updated, or deleted items.';
+  if (type.includes('renameKeys')) return 'Renames fields/keys in the input data.';
+  if (type.includes('switch')) return 'Routes items to different branches based on rules.';
+  if (type.includes('code')) return 'Executes custom JavaScript or Python code for advanced logic.';
   return 'Performs integration or data transformation in the workflow.';
 }
 
@@ -1372,6 +1705,42 @@ function getNodeCustomConfig(node: WorkflowNode): string {
   if (type.includes('if')) {
     return 'Define the conditions to validate input data.';
   }
+  if (type.includes('filter')) {
+    return 'Set the filtering conditions to match.';
+  }
+  if (type.includes('removeDuplicates')) {
+    return 'Select fields to compare for finding duplicates.';
+  }
+  if (type.includes('sort')) {
+    return 'Define sorting fields and ascending/descending order.';
+  }
+  if (type.includes('splitOut')) {
+    return 'Specify the name of the nested array field to split out.';
+  }
+  if (type.includes('aggregate')) {
+    return 'Choose the fields to aggregate and the output format.';
+  }
+  if (type.includes('summarize')) {
+    return 'Select fields and aggregation operations (e.g., sum, count).';
+  }
+  if (type.includes('limit')) {
+    return 'Specify the maximum number of items allowed to pass.';
+  }
+  if (type.includes('merge')) {
+    return 'Configure the merge mode (e.g., Merge by Key, Multiplex).';
+  }
+  if (type.includes('compareDatasets')) {
+    return 'Select the unique key to match items between datasets.';
+  }
+  if (type.includes('renameKeys')) {
+    return 'Define the keys mapping (old names to new names).';
+  }
+  if (type.includes('switch')) {
+    return 'Define routing rules and values for different branches.';
+  }
+  if (type.includes('code')) {
+    return 'Write custom JS/Python script and configure data input/output.';
+  }
   return 'Provide API parameters and connect credentials.';
 }
 
@@ -1380,11 +1749,28 @@ function getNodeColor(node: WorkflowNode): string {
   if (type.includes('Trigger') || type.includes('webhook')) {
     return '#fff7e6'; // Pastel Yellow
   }
-  if (type.includes('set') || type.includes('if')) {
+  if (
+    type.includes('set') ||
+    type.includes('if') ||
+    type.includes('filter') ||
+    type.includes('removeDuplicates') ||
+    type.includes('sort') ||
+    type.includes('splitOut') ||
+    type.includes('aggregate') ||
+    type.includes('summarize') ||
+    type.includes('limit') ||
+    type.includes('merge') ||
+    type.includes('compareDatasets') ||
+    type.includes('renameKeys') ||
+    type.includes('switch')
+  ) {
     return '#f5f5f5'; // Sleek Light Gray
   }
   if (type.includes('agent') || type.includes('nodes-langchain')) {
     return '#f6ffed'; // Soft Mint Green
+  }
+  if (type.includes('code')) {
+    return '#fff0f6'; // Soft Pink/Rose for Code nodes (indicates escape hatch/caution)
   }
   return '#e6f7ff'; // Clean Ice Blue
 }

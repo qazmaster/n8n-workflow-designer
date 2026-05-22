@@ -760,6 +760,74 @@ export class DeprecatedNodesWorkflow {
     expect(tsResult.warnings.filter(w => w.code === 'deprecated-native-node').length).toBe(2);
   });
 
+  describe('Node-First Design Policy and Built-in Nodes', () => {
+    it('maps English and Russian keywords to respective built-in nodes', async () => {
+      const keywords = [
+        { desc: 'sort the records by name', nodeType: 'n8n-nodes-base.sort' },
+        { desc: 'отсортировать по дате', nodeType: 'n8n-nodes-base.sort' },
+        { desc: 'limit the outputs to first 5 items', nodeType: 'n8n-nodes-base.limit' },
+        { desc: 'лимит первые 10', nodeType: 'n8n-nodes-base.limit' },
+        { desc: 'remove duplicates from list', nodeType: 'n8n-nodes-base.removeDuplicates' },
+        { desc: 'убрать дубликаты из контактов', nodeType: 'n8n-nodes-base.removeDuplicates' },
+        { desc: 'split out array items', nodeType: 'n8n-nodes-base.splitOut' },
+        { desc: 'разбить массив на элементы', nodeType: 'n8n-nodes-base.splitOut' },
+        { desc: 'aggregate list elements', nodeType: 'n8n-nodes-base.aggregate' },
+        { desc: 'собрать в список ID', nodeType: 'n8n-nodes-base.aggregate' },
+        { desc: 'summarize price count', nodeType: 'n8n-nodes-base.summarize' },
+        { desc: 'посчитать сумму транзакций', nodeType: 'n8n-nodes-base.summarize' },
+        { desc: 'merge multiple streams', nodeType: 'n8n-nodes-base.merge' },
+        { desc: 'объединить потоки данных', nodeType: 'n8n-nodes-base.merge' },
+        { desc: 'compare datasets to find diffs', nodeType: 'n8n-nodes-base.compareDatasets' },
+        { desc: 'сравнить данные таблиц', nodeType: 'n8n-nodes-base.compareDatasets' },
+        { desc: 'rename keys from input', nodeType: 'n8n-nodes-base.renameKeys' },
+        { desc: 'переименовать поля', nodeType: 'n8n-nodes-base.renameKeys' },
+        { desc: 'switch routing based on status', nodeType: 'n8n-nodes-base.switch' },
+        { desc: 'маршрутизировать по веткам', nodeType: 'n8n-nodes-base.switch' },
+        { desc: 'filter active leads only', nodeType: 'n8n-nodes-base.filter' },
+        { desc: 'оставить только оплаченные заказы', nodeType: 'n8n-nodes-base.filter' },
+        { desc: 'if status is active', nodeType: 'n8n-nodes-base.if' },
+        { desc: 'если статус активен', nodeType: 'n8n-nodes-base.if' },
+      ];
+
+      for (const item of keywords) {
+        const code = await designWorkflow({
+          description: `Manual trigger then ${item.desc}`,
+          workflowName: `Test Keyword ${item.nodeType}`,
+          includeErrorHandling: false,
+        });
+
+        const compiled = await compileWorkflow({ typescriptCode: code });
+        const hasNode = compiled.nodes.some((n) => n.type === item.nodeType);
+        expect(hasNode).toBe(true);
+      }
+    });
+
+    it('rejects Code node for tasks solvable by built-in nodes', async () => {
+      const code = await designWorkflow({
+        description: 'Manual trigger then javascript code node to filter items',
+        workflowName: 'Test Unsafe Code Rejection',
+        includeErrorHandling: false,
+      });
+
+      const compiled = await compileWorkflow({ typescriptCode: code });
+      const types = compiled.nodes.map(n => n.type);
+      expect(types).not.toContain('n8n-nodes-base.code');
+      expect(types).toContain('n8n-nodes-base.filter');
+    });
+
+    it('allows Code node for custom, non-trivial data transformations', async () => {
+      const code = await designWorkflow({
+        description: 'Manual trigger then run custom javascript script to parse complex xml with custom regex logic and return nested output',
+        workflowName: 'Test Allowed Code Node',
+        includeErrorHandling: false,
+      });
+
+      const compiled = await compileWorkflow({ typescriptCode: code });
+      const types = compiled.nodes.map(n => n.type);
+      expect(types).toContain('n8n-nodes-base.code');
+    });
+  });
+
   describe('delegated deploy mode and prepare tools', () => {
     const sampleWorkflowJson = {
       name: 'Test Delegated Workflow',
@@ -1155,7 +1223,7 @@ export class TSWorkflow {
             expected: {
               pathExists: ['Webhook', 'Bitrix24 CRM'],
               finalOutput: { ok: true },
-              assertions: [{ field: 'status', operator: 'equals', value: 'active' }],
+              assertions: [{ field: 'status', operator: 'equals' as const, value: 'active' }],
               errorExpected: false
             }
           }
