@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 import { compileWorkflow } from './compile.js';
 import { sanitizeWorkflowForDeploy } from './deploy.js';
 import type { TestContract } from './test-contract.js';
@@ -218,6 +220,15 @@ function findPathInShape(obj: any, targetKey: string, currentPath: string = '$js
   return null;
 }
 
+function computeRootCauseId(failedNode: string, errorClass: string, message: string): string {
+  const cleanMsg = message
+    .replace(/[a-f0-9-]{36}/gi, 'ID_REDACTED')
+    .replace(/[a-f0-9]{32}/gi, 'HASH_REDACTED')
+    .replace(/\d+/g, 'N');
+  const normalized = `${failedNode}:${errorClass}:${cleanMsg}`;
+  return createHash('sha256').update(normalized).digest('hex').substring(0, 16);
+}
+
 export interface PrepareRepairPatchArgs {
   workflowJson: Record<string, any>;
   executionResult: any;
@@ -244,6 +255,8 @@ export interface PrepareRepairPatchResult {
   retestRequired: boolean;
   autoRepairAllowed: boolean;
   safetyReason?: string;
+  rootCauseId: string;
+  repairAttemptId: string;
 }
 
 export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<PrepareRepairPatchResult> {
@@ -332,6 +345,9 @@ export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<
     safetyReason = 'Auto-repair is forbidden for credential/authentication issues without manual configuration.';
   }
 
+  const rootCauseId = computeRootCauseId(failedNode, errorClass, message);
+  const repairAttemptId = uuidv4();
+
   return {
     status: 'failed',
     failedNode,
@@ -345,6 +361,8 @@ export async function prepareRepairPatch(args: PrepareRepairPatchArgs): Promise<
     retestRequired: true,
     autoRepairAllowed,
     safetyReason,
+    rootCauseId,
+    repairAttemptId,
   };
 }
 
@@ -518,6 +536,49 @@ export async function preparePromotionPlan(args: PreparePromotionPlanArgs): Prom
   // Safe Promotion: clean up test clone artifacts from production payload
   const cleanWorkflow = JSON.parse(JSON.stringify(workflowJson));
 
+  // 1. Remove top-level staticData
+  delete cleanWorkflow.staticData;
+
+  // 2. Identify test nodes to filter out, and delete pinData on the rest
+  const testNodeNames = new Set<string>();
+  const filteredNodes = [];
+
+  const nodes = cleanWorkflow.nodes || [];
+  for (const node of nodes) {
+    const name = node.name || '';
+    const nameLower = name.toLowerCase();
+    if (name.startsWith('[TEST]') || nameLower.includes('mock') || nameLower.includes('test-only')) {
+      testNodeNames.add(name);
+    } else {
+      const clonedNode = { ...node };
+      delete clonedNode.pinData;
+      filteredNodes.push(clonedNode);
+    }
+  }
+  cleanWorkflow.nodes = filteredNodes;
+
+  // 3. Purge connection links matching filtered out test nodes
+  const connections = cleanWorkflow.connections || {};
+  const newConnections: Record<string, any> = {};
+
+  for (const source in connections) {
+    if (testNodeNames.has(source)) continue;
+    const srcConns = connections[source];
+    const newSrcConns: Record<string, any> = {};
+    for (const outputType in srcConns) {
+      const branches = srcConns[outputType] || [];
+      const newBranches = branches.map((branch: any) => {
+        if (Array.isArray(branch)) {
+          return branch.filter((target: any) => target && target.node && !testNodeNames.has(target.node));
+        }
+        return branch;
+      });
+      newSrcConns[outputType] = newBranches;
+    }
+    newConnections[source] = newSrcConns;
+  }
+  cleanWorkflow.connections = newConnections;
+
   let cleanName = cleanWorkflow.name || 'Workflow';
   if (cleanName.startsWith('[TEST]')) {
     cleanName = cleanName.replace(/^\[TEST\]\s*/, '');
@@ -632,6 +693,8 @@ export interface EvaluateRepairScopeArgs {
   executionResult: any;
   failedAttempts: number;
   diagnosis?: any;
+  rootCauseId?: string;
+  repairAttemptId?: string;
 }
 
 export interface EvaluateRepairScopeResult {
@@ -640,14 +703,19 @@ export interface EvaluateRepairScopeResult {
   failedAttempts: number;
   recommendedAction: 'patch' | 'refactor' | 'redesign';
   autoApplyAllowed: boolean;
+  rootCauseId: string;
+  repairAttemptId: string;
 }
 
 export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promise<EvaluateRepairScopeResult> {
   const { workflowJson, executionResult, failedAttempts, diagnosis } = args;
 
-  let errorMessage = '';
+  let failedNode = 'Unknown Node';
+  let message = '';
+  let errorClass = 'runtime_error';
+
   if (diagnosis && diagnosis.message) {
-    errorMessage = diagnosis.message;
+    message = diagnosis.message;
   } else if (executionResult) {
     const resultObj = typeof executionResult === 'string' ? JSON.parse(executionResult) : executionResult;
     const runData = resultObj?.data?.resultData?.runData || resultObj?.runData || {};
@@ -656,7 +724,9 @@ export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promis
       if (Array.isArray(runs)) {
         for (const run of runs) {
           if (run.error) {
-            errorMessage = run.error.message || '';
+            failedNode = nodeName;
+            message = run.error.message || '';
+            errorClass = run.error.code || 'node_failure';
             break;
           }
         }
@@ -664,7 +734,10 @@ export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promis
     }
   }
 
-  const lowerMsg = errorMessage.toLowerCase();
+  const computedRootCauseId = args.rootCauseId || computeRootCauseId(failedNode, errorClass, message);
+  const computedRepairAttemptId = args.repairAttemptId || uuidv4();
+
+  const lowerMsg = message.toLowerCase();
 
   if (failedAttempts >= 3) {
     return {
@@ -673,6 +746,8 @@ export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promis
       failedAttempts,
       recommendedAction: 'redesign',
       autoApplyAllowed: false,
+      rootCauseId: computedRootCauseId,
+      repairAttemptId: computedRepairAttemptId,
     };
   }
 
@@ -688,6 +763,8 @@ export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promis
       failedAttempts,
       recommendedAction: 'redesign',
       autoApplyAllowed: false,
+      rootCauseId: computedRootCauseId,
+      repairAttemptId: computedRepairAttemptId,
     };
   }
 
@@ -698,6 +775,8 @@ export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promis
       failedAttempts,
       recommendedAction: 'refactor',
       autoApplyAllowed: true,
+      rootCauseId: computedRootCauseId,
+      repairAttemptId: computedRepairAttemptId,
     };
   }
 
@@ -707,6 +786,8 @@ export async function evaluateRepairScope(args: EvaluateRepairScopeArgs): Promis
     failedAttempts,
     recommendedAction: 'patch',
     autoApplyAllowed: true,
+    rootCauseId: computedRootCauseId,
+    repairAttemptId: computedRepairAttemptId,
   };
 }
 
@@ -827,6 +908,7 @@ export interface GenerateWorkflowVariantResult {
   variantWorkflowJson: Record<string, any>;
   success: boolean;
   message: string;
+  subflowWorkflowJson?: Record<string, any>;
 }
 
 export async function generateWorkflowVariant(args: GenerateWorkflowVariantArgs): Promise<GenerateWorkflowVariantResult> {
@@ -838,7 +920,8 @@ export async function generateWorkflowVariant(args: GenerateWorkflowVariantArgs)
   const variant = JSON.parse(JSON.stringify(workflowJson));
   variant.name = variantName;
 
-  const nodes = variant.nodes || [];
+  let nodes = variant.nodes || [];
+  let subflowWorkflowJson: Record<string, any> | undefined;
 
   for (const mod of modifications) {
     if (mod.type === 'replace_node' && mod.targetNode && mod.newNode) {
@@ -853,6 +936,115 @@ export async function generateWorkflowVariant(args: GenerateWorkflowVariantArgs)
       if (triggerIdx !== -1) {
         nodes[triggerIdx] = { ...nodes[triggerIdx], ...mod.newNode };
       }
+    } else if (mod.type === 'split_workflow' && mod.targetNode) {
+      const targetNodeName = mod.targetNode;
+      // 1. BFS to collect downstream nodes
+      const downstream = new Set<string>();
+      const queue = [targetNodeName];
+      downstream.add(targetNodeName);
+
+      const connections = variant.connections || {};
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        const nodeConns = connections[current] || {};
+        for (const outputType in nodeConns) {
+          const branches = nodeConns[outputType] || [];
+          for (const branch of branches) {
+            if (Array.isArray(branch)) {
+              for (const target of branch) {
+                if (target && target.node && !downstream.has(target.node)) {
+                  downstream.add(target.node);
+                  queue.push(target.node);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // 2. Separate nodes
+      const subflowNodes = nodes.filter((n: any) => downstream.has(n.name));
+      const remainingNodes = nodes.filter((n: any) => !downstream.has(n.name));
+
+      // 3. New subflow node in main workflow
+      const subflowNodeName = `Execute Subflow: ${targetNodeName}`;
+      const subflowNode = {
+        name: subflowNodeName,
+        type: 'n8n-nodes-base.executeWorkflow',
+        typeVersion: 1,
+        position: nodes.find((n: any) => n.name === targetNodeName)?.position || [0, 0],
+        parameters: {
+          workflowId: mod.subflowWorkflowId || 'subflow-placeholder',
+        }
+      };
+      remainingNodes.push(subflowNode);
+
+      // 4. Update main connections
+      const newConnections: Record<string, any> = {};
+      for (const source in connections) {
+        if (downstream.has(source)) continue;
+        const srcConns = connections[source];
+        const newSrcConns: Record<string, any> = {};
+        for (const outputType in srcConns) {
+          const branches = srcConns[outputType] || [];
+          const newBranches = branches.map((branch: any) => {
+            if (Array.isArray(branch)) {
+              return branch.map((target: any) => {
+                if (target && target.node === targetNodeName) {
+                  return { ...target, node: subflowNodeName };
+                }
+                return target;
+              });
+            }
+            return branch;
+          });
+          newSrcConns[outputType] = newBranches;
+        }
+        newConnections[source] = newSrcConns;
+      }
+
+      // 5. Build subflow connections
+      const subflowConnections: Record<string, any> = {};
+      for (const source of downstream) {
+        if (connections[source]) {
+          subflowConnections[source] = connections[source];
+        }
+      }
+
+      // 6. Prepend Execute Workflow Trigger to subflow
+      const triggerNodeName = 'Subflow Start';
+      const subflowTriggerNode = {
+        name: triggerNodeName,
+        type: 'n8n-nodes-base.executeWorkflowTrigger',
+        typeVersion: 1,
+        position: [
+          (subflowNodes[0]?.position?.[0] || 100) - 200,
+          subflowNodes[0]?.position?.[1] || 100
+        ]
+      };
+      subflowNodes.unshift(subflowTriggerNode);
+      subflowConnections[triggerNodeName] = {
+        main: [
+          [
+            {
+              node: targetNodeName,
+              type: 'main',
+              index: 0
+            }
+          ]
+        ]
+      };
+
+      variant.connections = newConnections;
+      nodes = remainingNodes;
+
+      subflowWorkflowJson = {
+        name: `${variantName} - Subflow ${targetNodeName}`,
+        nodes: subflowNodes,
+        connections: subflowConnections,
+        settings: variant.settings || {},
+      };
     }
   }
 
@@ -862,6 +1054,7 @@ export async function generateWorkflowVariant(args: GenerateWorkflowVariantArgs)
     variantWorkflowJson: variant,
     success: true,
     message: `Successfully generated workflow variant "${variantName}" with ${modifications.length} modifications.`,
+    subflowWorkflowJson,
   };
 }
 

@@ -986,12 +986,84 @@ export class TSWorkflow {
       ]);
     });
 
-    it('evaluateExecutionResult verifies assertions against logs', async () => {
+    it('validateWorkflowAgainstContract validates branch coverage, allowed node types, and forbidden external calls', async () => {
+      const contract = {
+        workflowName: 'Policy Contract',
+        testCases: [],
+        requiredBranchCoverage: 80,
+        allowedNodeTypes: ['n8n-nodes-base.manualTrigger', 'n8n-nodes-base.if', 'n8n-nodes-base.set'],
+        forbidden: {
+          externalCalls: true
+        }
+      };
+
+      // 1. Fail: contains disallowed node type and forbidden external call
+      const badWorkflow = {
+        nodes: [
+          { name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+          { name: 'If Node', type: 'n8n-nodes-base.if' },
+          { name: 'HTTP Node', type: 'n8n-nodes-base.httpRequest' } // disallowed & external call
+        ],
+        connections: {
+          'Trigger': { main: [[{ node: 'If Node', type: 'main', index: 0 }]] },
+          'If Node': { main: [[], []] } // 0% branch coverage (2 total branches, 0 connected)
+        }
+      };
+
+      const result1 = await validateWorkflowAgainstContract({
+        workflowJson: badWorkflow,
+        contract
+      });
+
+      expect(result1.valid).toBe(false);
+      expect(result1.errors.some(e => e.includes('uses disallowed type'))).toBe(true);
+      expect(result1.errors.some(e => e.includes('makes external network calls'))).toBe(true);
+      expect(result1.errors.some(e => e.includes('branch coverage is 0.0%'))).toBe(true);
+
+      // 2. Pass: conforms to everything
+      const goodWorkflow = {
+        nodes: [
+          { name: 'Trigger', type: 'n8n-nodes-base.manualTrigger' },
+          { name: 'If Node', type: 'n8n-nodes-base.if' },
+          { name: 'Set Node', type: 'n8n-nodes-base.set' }
+        ],
+        connections: {
+          'Trigger': { main: [[{ node: 'If Node', type: 'main', index: 0 }]] },
+          'If Node': {
+            main: [
+              [{ node: 'Set Node', type: 'main', index: 0 }],
+              [{ node: 'Set Node', type: 'main', index: 0 }]
+            ]
+          } // 100% branch coverage (2 total branches, 2 connected)
+        }
+      };
+
+      const result2 = await validateWorkflowAgainstContract({
+        workflowJson: goodWorkflow,
+        contract
+      });
+
+      expect(result2.valid).toBe(true);
+      expect(result2.errors).toEqual([]);
+    });
+
+    it('evaluateExecutionResult verifies rich assertions, paths, and errorExpected against logs', async () => {
       const assertions = [
         {
-          testCaseId: 'test_1',
-          nodeName: 'Action',
-          expectedOutput: { ok: true, id: 100 }
+          testCaseId: 'test_rich',
+          nodeName: 'ActionNode',
+          assertions: [
+            { field: '$json.user.name', operator: 'equals', value: 'Alice' },
+            { field: 'user.id', operator: 'lessThan', value: 200 },
+            { field: 'user.tags', operator: 'contains', value: 'admin' },
+            { field: 'user.missing', operator: 'notExists' },
+            { field: 'user.name', operator: 'matchesRegex', value: '^Ali' }
+          ]
+        },
+        {
+          testCaseId: 'test_error',
+          nodeName: 'FailingNode',
+          errorExpected: true
         }
       ];
 
@@ -999,16 +1071,30 @@ export class TSWorkflow {
         data: {
           resultData: {
             runData: {
-              'Action': [
+              'ActionNode': [
                 {
                   data: {
                     main: [
                       [
                         {
-                          json: { ok: true, id: 100 }
+                          json: {
+                            user: {
+                              name: 'Alice',
+                              id: 123,
+                              tags: ['user', 'admin']
+                            }
+                          }
                         }
                       ]
                     ]
+                  }
+                }
+              ],
+              'FailingNode': [
+                {
+                  error: {
+                    message: 'Connection failed',
+                    code: 'ECONNREFUSED'
                   }
                 }
               ]
@@ -1024,6 +1110,7 @@ export class TSWorkflow {
 
       expect(result.success).toBe(true);
       expect(result.results[0].passed).toBe(true);
+      expect(result.results[1].passed).toBe(true);
     });
   });
 
@@ -1390,6 +1477,46 @@ export class TSWorkflow {
       expect(result.variantWorkflowJson.nodes[1].parameters.id).toBe('456');
       expect(result.variantWorkflowJson.nodes[1].parameters.mode).toBe('update');
       expect(result.variantWorkflowJson.nodes[2].name).toBe('New Helper Node');
+    });
+
+    it('generate_workflow_variant handles split_workflow modification', async () => {
+      const baseWorkflow = {
+        name: 'Original Workflow',
+        nodes: [
+          { name: 'My Webhook', type: 'n8n-nodes-base.webhook' },
+          { name: 'Node A', type: 'n8n-nodes-base.set' },
+          { name: 'Node B', type: 'n8n-nodes-base.set' }
+        ],
+        connections: {
+          'My Webhook': {
+            main: [[{ node: 'Node A', type: 'main', index: 0 }]]
+          },
+          'Node A': {
+            main: [[{ node: 'Node B', type: 'main', index: 0 }]]
+          }
+        },
+        settings: {}
+      };
+
+      const result = await generateWorkflowVariant({
+        workflowJson: baseWorkflow,
+        variantName: 'Split Variant',
+        modifications: [
+          {
+            type: 'split_workflow',
+            targetNode: 'Node A'
+          }
+        ]
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.variantWorkflowJson.nodes.map((n: any) => n.type)).toContain('n8n-nodes-base.executeWorkflow');
+      expect(result.subflowWorkflowJson).toBeDefined();
+      
+      const subflow = result.subflowWorkflowJson!;
+      expect(subflow.nodes.map((n: any) => n.type)).toContain('n8n-nodes-base.executeWorkflowTrigger');
+      expect(subflow.nodes.map((n: any) => n.name)).toContain('Node A');
+      expect(subflow.nodes.map((n: any) => n.name)).toContain('Node B');
     });
 
     it('compare_workflow_variants detects added, removed, and modified components', async () => {

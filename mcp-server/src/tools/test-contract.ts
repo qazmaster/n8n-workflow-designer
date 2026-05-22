@@ -1,22 +1,49 @@
-export interface TestCase {
-  id: string;
-  input?: any;
-  expected: {
-    pathExists?: string[];
-    finalOutput?: any;
-  };
-}
+import { z } from 'zod';
 
-export interface ForbiddenCriteria {
-  credentials?: boolean;
-  nodes?: string[];
-}
+export const AssertionItemSchema = z.object({
+  field: z.string().optional(),
+  operator: z.enum([
+    'equals',
+    'contains',
+    'exists',
+    'notExists',
+    'matchesRegex',
+    'statusCode',
+    'lessThan',
+    'greaterThan'
+  ]),
+  value: z.any().optional(),
+});
 
-export interface TestContract {
-  workflowName: string;
-  testCases: TestCase[];
-  forbidden?: ForbiddenCriteria;
-}
+export const TestCaseSchema = z.object({
+  id: z.string(),
+  input: z.any().optional(),
+  expected: z.object({
+    pathExists: z.array(z.string()).optional(),
+    finalOutput: z.any().optional(),
+    assertions: z.array(AssertionItemSchema).optional(),
+    errorExpected: z.boolean().optional(),
+  }),
+});
+
+export const ForbiddenCriteriaSchema = z.object({
+  credentials: z.boolean().optional(),
+  nodes: z.array(z.string()).optional(),
+  externalCalls: z.boolean().optional(),
+});
+
+export const TestContractSchema = z.object({
+  workflowName: z.string(),
+  testCases: z.array(TestCaseSchema),
+  forbidden: ForbiddenCriteriaSchema.optional(),
+  allowedNodeTypes: z.array(z.string()).optional(),
+  requiredBranchCoverage: z.number().min(0).max(100).optional(),
+});
+
+export type AssertionItem = z.infer<typeof AssertionItemSchema>;
+export type TestCase = z.infer<typeof TestCaseSchema>;
+export type ForbiddenCriteria = z.infer<typeof ForbiddenCriteriaSchema>;
+export type TestContract = z.infer<typeof TestContractSchema>;
 
 export interface ContractValidationResult {
   valid: boolean;
@@ -152,6 +179,14 @@ export async function validateWorkflowAgainstContract(args: ValidateWorkflowAgai
   const errors: string[] = [];
   const warnings: string[] = [];
 
+  // Parse contract with Zod
+  const parseResult = TestContractSchema.safeParse(contract);
+  if (!parseResult.success) {
+    for (const issue of parseResult.error.issues) {
+      errors.push(`Contract validation error: ${issue.path.join('.')}: ${issue.message}`);
+    }
+  }
+
   const nodes = workflowJson.nodes || [];
   const connections = workflowJson.connections || {};
 
@@ -209,6 +244,70 @@ export async function validateWorkflowAgainstContract(args: ValidateWorkflowAgai
         }
       }
     }
+
+    // Check forbidden external network calls
+    if (contract.forbidden.externalCalls) {
+      const externalCallNodeTypes = [
+        'n8n-nodes-base.httpRequest',
+        'n8n-nodes-base.graphql',
+        'n8n-nodes-base.http',
+      ];
+      for (const node of nodes) {
+        const typeLower = (node.type || '').toLowerCase();
+        const isExternalType = externalCallNodeTypes.includes(node.type) ||
+          (!typeLower.includes('set') && !typeLower.includes('code') && !typeLower.includes('merge') && !typeLower.includes('switch') && !typeLower.includes('if') && !typeLower.includes('trigger') && !typeLower.includes('respond') && typeLower.includes('http'));
+        
+        if (isExternalType) {
+          errors.push(`Node "${node.name}" (${node.type}) makes external network calls, which is forbidden by this contract.`);
+        }
+      }
+    }
+  }
+
+  // 2. Allowed Node Types check
+  if (contract.allowedNodeTypes) {
+    const allowed = new Set(contract.allowedNodeTypes);
+    for (const node of nodes) {
+      if (node.type && !allowed.has(node.type)) {
+        errors.push(`Node "${node.name}" uses disallowed type "${node.type}".`);
+      }
+    }
+  }
+
+  // 3. Static branch coverage validation
+  if (contract.requiredBranchCoverage !== undefined) {
+    let totalBranches = 0;
+    let connectedBranches = 0;
+
+    for (const node of nodes) {
+      const type = node.type || '';
+      const name = node.name || '';
+      const nodeConns = connections[name]?.main || [];
+
+      if (type === 'n8n-nodes-base.if' || type.includes('.if')) {
+        totalBranches += 2;
+        if (nodeConns[0] && nodeConns[0].length > 0) connectedBranches++;
+        if (nodeConns[1] && nodeConns[1].length > 0) connectedBranches++;
+      } else if (type === 'n8n-nodes-base.filter' || type.includes('.filter')) {
+        totalBranches += 2;
+        if (nodeConns[0] && nodeConns[0].length > 0) connectedBranches++;
+        if (nodeConns[1] && nodeConns[1].length > 0) connectedBranches++;
+      } else if (type === 'n8n-nodes-base.switch' || type.includes('.switch')) {
+        const rules = node.parameters?.rules || [];
+        const possible = Array.isArray(rules) && rules.length > 0 ? rules.length : 4;
+        totalBranches += possible;
+        for (let i = 0; i < possible; i++) {
+          if (nodeConns[i] && nodeConns[i].length > 0) {
+            connectedBranches++;
+          }
+        }
+      }
+    }
+
+    const coverage = totalBranches > 0 ? (connectedBranches / totalBranches) * 100 : 100;
+    if (coverage < contract.requiredBranchCoverage) {
+      errors.push(`Static branch coverage is ${coverage.toFixed(1)}%, which is below the required ${contract.requiredBranchCoverage}%.`);
+    }
   }
 
   // Check deprecated node types
@@ -219,12 +318,11 @@ export async function validateWorkflowAgainstContract(args: ValidateWorkflowAgai
     }
   }
 
-  // 2. Build adjacency list for connectivity path validation
+  // 4. Build adjacency list for connectivity path validation
   const adjList: Record<string, string[]> = {};
   for (const srcNode in connections) {
     adjList[srcNode] = [];
     const srcConns = connections[srcNode];
-    // Traverse all outputs: main, error, etc.
     for (const outputType in srcConns) {
       const paths = srcConns[outputType];
       if (Array.isArray(paths)) {
@@ -262,7 +360,7 @@ export async function validateWorkflowAgainstContract(args: ValidateWorkflowAgai
     return false;
   };
 
-  // 3. Validate test cases
+  // 5. Validate test cases
   for (const tc of contract.testCases) {
     const { pathExists } = tc.expected;
     if (Array.isArray(pathExists)) {

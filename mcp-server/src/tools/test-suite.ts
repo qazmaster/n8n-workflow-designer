@@ -97,7 +97,9 @@ export async function prepareIntegrationTestPlan(args: PrepareIntegrationTestPla
       assertions.push({
         testCaseId: tc.id,
         nodeName: finalNodeName || 'Prepare Data',
-        expectedOutput: tc.expected.finalOutput
+        expectedOutput: tc.expected.finalOutput,
+        assertions: tc.expected.assertions,
+        errorExpected: tc.expected.errorExpected,
       });
     }
   }
@@ -125,19 +127,83 @@ export async function prepareIntegrationTestPlan(args: PrepareIntegrationTestPla
   };
 }
 
+function resolveJsonPath(obj: any, pathStr: string): any {
+  if (!obj || !pathStr) return undefined;
+  let cleanPath = pathStr.trim();
+  if (cleanPath.startsWith('$json.')) {
+    cleanPath = cleanPath.substring(6);
+  } else if (cleanPath.startsWith('$json')) {
+    cleanPath = cleanPath.substring(5);
+  }
+  cleanPath = cleanPath
+    .replace(/\[\s*['"]?([^'"]+)['"]?\s*\]/g, '.$1')
+    .replace(/^\./, '');
+  
+  if (cleanPath === '') return obj;
+  
+  const parts = cleanPath.split('.').filter(Boolean);
+  let current = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function evaluateOperator(actual: any, operator: string, expectedVal: any): boolean {
+  switch (operator) {
+    case 'equals':
+      if (typeof actual === 'object' && typeof expectedVal === 'object') {
+        return JSON.stringify(actual) === JSON.stringify(expectedVal);
+      }
+      return actual == expectedVal;
+    case 'contains':
+      if (typeof actual === 'string') {
+        return actual.includes(String(expectedVal));
+      }
+      if (Array.isArray(actual)) {
+        return actual.some(item => {
+          if (typeof item === 'object' && typeof expectedVal === 'object') {
+            return JSON.stringify(item) === JSON.stringify(expectedVal);
+          }
+          return item == expectedVal;
+        });
+      }
+      return false;
+    case 'exists':
+      return actual !== undefined && actual !== null;
+    case 'notExists':
+      return actual === undefined || actual === null;
+    case 'matchesRegex':
+      if (typeof actual !== 'string') return false;
+      try {
+        const regex = new RegExp(expectedVal);
+        return regex.test(actual);
+      } catch {
+        return false;
+      }
+    case 'statusCode':
+      return Number(actual) === Number(expectedVal);
+    case 'lessThan':
+      return Number(actual) < Number(expectedVal);
+    case 'greaterThan':
+      return Number(actual) > Number(expectedVal);
+    default:
+      return false;
+  }
+}
+
 export async function evaluateExecutionResult(args: EvaluateExecutionResultArgs): Promise<{ success: boolean, results: any[] }> {
   const { executionResult, assertions } = args;
   const results: any[] = [];
   let overallSuccess = true;
 
-  // Resolve node output data from n8n execution result
-  // An execution result has a structure like: { id: "123", finished: true, data: { resultData: { runData: { "Node Name": [ { data: { main: [ [ { json: ... } ] ] } } ] } } }
   const runData = executionResult?.data?.resultData?.runData || {};
 
   for (const assertion of assertions) {
-    const { testCaseId, nodeName, expectedOutput } = assertion;
+    const { testCaseId, nodeName, expectedOutput, assertions: richAssertions, errorExpected } = assertion;
     const nodeRun = runData[nodeName];
-    
+
     if (!nodeRun || nodeRun.length === 0) {
       results.push({
         testCaseId,
@@ -149,17 +215,92 @@ export async function evaluateExecutionResult(args: EvaluateExecutionResultArgs)
       continue;
     }
 
-    // Try to extract output JSON
-    const outputItem = nodeRun[0]?.data?.main?.[0]?.[0]?.json || {};
-    
-    // Validate assertions
+    const outputItems: any[] = [];
+    let hasError = false;
+    let nodeError: any = null;
+
+    for (const run of nodeRun) {
+      if (run.error) {
+        hasError = true;
+        nodeError = run.error;
+      }
+      const mainData = run.data?.main || [];
+      for (const branch of mainData) {
+        if (Array.isArray(branch)) {
+          for (const item of branch) {
+            if (item && item.json) {
+              outputItems.push(item.json);
+            }
+          }
+        }
+      }
+    }
+
+    if (errorExpected) {
+      if (hasError) {
+        results.push({
+          testCaseId,
+          nodeName,
+          passed: true,
+          details: { errorExpected: { expected: true, actual: true, match: true } },
+          error: nodeError
+        });
+      } else {
+        results.push({
+          testCaseId,
+          nodeName,
+          passed: false,
+          details: { errorExpected: { expected: true, actual: false, match: false } },
+          error: 'Expected node execution to fail, but it succeeded.'
+        });
+        overallSuccess = false;
+      }
+      continue;
+    } else {
+      if (hasError) {
+        results.push({
+          testCaseId,
+          nodeName,
+          passed: false,
+          details: { errorExpected: { expected: false, actual: true, match: false } },
+          error: `Node execution failed unexpectedly: ${nodeError?.message || 'Unknown error'}`
+        });
+        overallSuccess = false;
+        continue;
+      }
+    }
+
+    const primaryItem = outputItems[0] || {};
     let passed = true;
     const details: Record<string, any> = {};
+
+    if (Array.isArray(richAssertions)) {
+      for (let idx = 0; idx < richAssertions.length; idx++) {
+        const assertItem = richAssertions[idx];
+        const field = assertItem.field || '';
+        const operator = assertItem.operator;
+        const expectedVal = assertItem.value;
+
+        const actualVal = resolveJsonPath(primaryItem, field);
+        const match = evaluateOperator(actualVal, operator, expectedVal);
+
+        if (!match) {
+          passed = false;
+        }
+        details[`assertion_${idx}`] = {
+          field,
+          operator,
+          expected: expectedVal,
+          actual: actualVal,
+          match
+        };
+      }
+    }
 
     if (expectedOutput) {
       for (const key in expectedOutput) {
         const expectedVal = expectedOutput[key];
-        const actualVal = outputItem[key];
+        const actualVal = primaryItem[key];
         
         if (actualVal !== expectedVal) {
           passed = false;
@@ -179,7 +320,8 @@ export async function evaluateExecutionResult(args: EvaluateExecutionResultArgs)
       nodeName,
       passed,
       details,
-      output: outputItem
+      output: primaryItem,
+      outputs: outputItems
     });
   }
 

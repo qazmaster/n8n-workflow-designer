@@ -74,7 +74,7 @@ import {
   type PrepareMigrationPlanArgs,
 } from './tools/sandbox.js';
 
-const DEPLOY_MODE = (process.env.N8N_DESIGNER_DEPLOY_MODE || 'standalone').toLowerCase();
+const DEPLOY_MODE = (process.env.N8N_DESIGNER_DEPLOY_MODE || process.env.DEPLOY_MODE || 'standalone').toLowerCase();
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
 const N8N_BASE_URL = process.env.N8N_BASE_URL || 'http://localhost:5678';
 

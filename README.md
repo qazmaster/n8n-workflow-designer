@@ -91,6 +91,19 @@ The MCP server also mirrors useful n8n public API surfaces directly: workflow up
 
 `czlonkowski/n8n-mcp` complements those lifecycle calls with a searchable n8n knowledge base. Use it to avoid invented node names, invalid operations, stale parameters, and missed template patterns.
 
+## Server Execution Modes
+
+The server operates in one of two modes depending on the `N8N_DESIGNER_DEPLOY_MODE` (or `DEPLOY_MODE`) environment variable:
+
+### 1. Standalone Mode (`standalone` - Default)
+Direct mutation and query tools (`deploy_workflow`, `execute_workflow`, `import_workflow`, `export_workflow`, `list_workflows`, `get_workflow`, `list_credentials`, `list_community_packages`) call the n8n API directly. This requires `N8N_API_KEY` and `N8N_BASE_URL` to be configured.
+
+### 2. Delegated Mode (`delegated`)
+Direct mutations are blocked. Instead, the server operates completely offline to compile, sanitize, and validate workflows, returning structured migration and execution plans.
+- **Remote / Hosted Backend Support**: The target `n8n-mcp` backend can be local, remote self-hosted, or hosted. `n8n-workflow-designer` does not make any direct HTTP calls to the backend or require local installation of `czlonkowski/n8n-mcp`. The AI client executes all commands via its own configured `n8n-mcp` tools.
+- **No Credentials Required**: In delegated mode, `N8N_API_KEY` and `N8N_BASE_URL` are not required by `n8n-workflow-designer`.
+- **Halt Check**: Before calling any recommended tool returned by `prepare_*_plan`, the AI agent must check if those tools are configured and available in its client MCP tool list. If these tools are not available, the agent must stop immediately and ask the user to connect or configure the `n8n-mcp` server.
+
 ## Safer deployment modes
 
 `deploy_workflow` and `import_workflow` support three strategies:
@@ -102,6 +115,38 @@ The MCP server also mirrors useful n8n public API surfaces directly: workflow up
 | `create` | Always `POST /api/v1/workflows`; equivalent to `updateExisting: false`. |
 
 Set `dryRun: true` to inspect the sanitized payload and selected strategy without mutating the n8n instance or requiring `N8N_API_KEY`. Mutating deploy/import calls require `confirmMutation: true` so generated workflows are not created, updated, or activated accidentally.
+
+## Three-Layered TDD Model (Test-Driven Development)
+
+The designer implements a **Three-Layered TDD Model** that separates testing specifications and mocks from production code:
+
+*   **Level 1 — Design Contract TDD**: Create a declarative test contract defining expected paths (e.g. from trigger to action nodes), expected node outputs, and forbidden credential rules (e.g. preventing hardcoded tokens).
+*   **Level 2 — Offline Structural TDD**: Statically validate the compiled workflow JSON against the contract policies, and generate localized Vitest/Jest `.test.ts` test suite files for offline pipeline runs.
+*   **Level 3 — Sandbox Integration TDD & Repair Loop**: Deploy a sandbox test clone and execute runtime integration tests directly on the live n8n instance, evaluate outcomes, run an automated repair loop for expression/credential issues, and safely promote passing workflows to production.
+
+### TDD & Sandbox Execution Pipeline
+
+To build and verify a workflow using sandbox-guided TDD, execute the following pipeline:
+
+```
+Contract (generate_test_contract)
+   ↓
+Compile (compile_workflow)
+   ↓
+Static Validation (validate_workflow_against_contract)
+   ↓
+Sandbox Deploy (prepare_sandbox_deploy_plan)
+   ↓
+Manual/Test Execution (prepare_execution_suite)
+   ↓
+Execution Result Evaluation (evaluate_execution_result)
+   ↓
+Repair Loop (prepare_repair_patch) [if failed]
+   ↓
+Production Promotion (prepare_promotion_plan)
+   ↓
+Sandbox Cleanup (prepare_cleanup_plan)
+```
 
 ## Validation registry
 
