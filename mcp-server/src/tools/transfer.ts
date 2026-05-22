@@ -64,7 +64,7 @@ export async function listCommunityPackages(baseUrl: string, apiKey: string): Pr
   };
 }
 
-function stripExportMetadata(workflow: N8nApiWorkflow): N8nApiWorkflow {
+export function stripExportMetadata(workflow: N8nApiWorkflow): N8nApiWorkflow {
   const {
     createdAt: _createdAt,
     updatedAt: _updatedAt,

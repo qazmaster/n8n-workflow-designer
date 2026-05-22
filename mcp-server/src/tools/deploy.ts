@@ -78,7 +78,7 @@ export async function deployWorkflow(
   };
 }
 
-function resolveDeployMode(args: DeployWorkflowArgs): DeployMode {
+export function resolveDeployMode(args: DeployWorkflowArgs): DeployMode {
   if (args.workflowId && args.mode && args.mode !== 'update-by-id') {
     throw new Error('workflowId can only be combined with mode: update-by-id. Remove workflowId or use update-by-id.');
   }
@@ -98,7 +98,7 @@ function resolveDeployMode(args: DeployWorkflowArgs): DeployMode {
   return 'upsert-by-name';
 }
 
-function sanitizeWorkflowForDeploy(workflowJson: N8nApiWorkflow): N8nApiWorkflow {
+export function sanitizeWorkflowForDeploy(workflowJson: N8nApiWorkflow): N8nApiWorkflow {
   const {
     id: _id,
     active: _active,

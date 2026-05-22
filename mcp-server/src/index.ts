@@ -21,11 +21,22 @@ import {
   type ImportWorkflowArgs,
 } from './tools/transfer.js';
 import { validateWorkflow, type ValidateWorkflowArgs } from './tools/validate.js';
+import {
+  prepareDeployPlan,
+  prepareExecutionPlan,
+  prepareImportPlan,
+  prepareExportPlan,
+  type PrepareDeployPlanArgs,
+  type PrepareExecutionPlanArgs,
+  type PrepareImportPlanArgs,
+  type PrepareExportPlanArgs,
+} from './tools/prepare.js';
 
+const DEPLOY_MODE = (process.env.N8N_DESIGNER_DEPLOY_MODE || 'standalone').toLowerCase();
 const N8N_API_KEY = process.env.N8N_API_KEY || '';
 const N8N_BASE_URL = process.env.N8N_BASE_URL || 'http://localhost:5678';
 
-if (!N8N_API_KEY) {
+if (DEPLOY_MODE !== 'delegated' && !N8N_API_KEY) {
   console.error('Warning: N8N_API_KEY not set. Deployment tools will fail.');
 }
 
@@ -252,6 +263,120 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: [],
         },
       },
+      {
+        name: 'prepare_deploy_plan',
+        description: 'Compile, sanitize, and validate a workflow (either from TypeScript code, file path, or JSON), producing a sanitized JSON payload, requiredTools list, and recommendedNextTool name for deployment via n8n-mcp.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Optional raw or partial workflow JSON',
+            },
+            typescriptCode: {
+              type: 'string',
+              description: 'Optional TypeScript decorator code to compile',
+            },
+            filePath: {
+              type: 'string',
+              description: 'Optional absolute path to .workflow.ts file',
+            },
+            activate: {
+              type: 'boolean',
+              description: 'Whether to activate the workflow after deployment (default: false)',
+            },
+            updateExisting: {
+              type: 'boolean',
+              description: 'Whether to update existing workflow by name if no ID is provided (default: true)',
+            },
+            workflowId: {
+              type: 'string',
+              description: 'Explicit n8n workflow ID to update (forces update-by-id)',
+            },
+            mode: {
+              type: 'string',
+              enum: ['upsert-by-name', 'update-by-id', 'create'],
+              description: 'Deployment strategy',
+            },
+          },
+        },
+      },
+      {
+        name: 'prepare_execution_plan',
+        description: 'Prepare recommended arguments, requiredTools list, and recommendedNextTool name for triggering workflow execution via n8n-mcp.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowId: {
+              type: 'string',
+              description: 'n8n workflow ID to execute',
+            },
+            endpoint: {
+              type: 'string',
+              enum: ['execute', 'run'],
+              description: 'Execution style (default: execute)',
+            },
+            inputData: {
+              type: 'object',
+              description: 'Optional execution input data',
+            },
+            triggerType: {
+              type: 'string',
+              description: 'Optional trigger type (webhook/form/chat)',
+            },
+            message: {
+              type: 'string',
+              description: 'Optional chat trigger message',
+            },
+          },
+          required: ['workflowId'],
+        },
+      },
+      {
+        name: 'prepare_import_plan',
+        description: 'Prepare a clean workflow import payload, requiredTools list, and recommendedNextTool name for importing via n8n-mcp.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowJson: {
+              type: 'object',
+              description: 'Complete workflow JSON to import',
+            },
+            workflowId: {
+              type: 'string',
+              description: 'Explicit workflow ID for update-by-ID imports',
+            },
+            mode: {
+              type: 'string',
+              enum: ['upsert-by-name', 'update-by-id', 'create'],
+              description: 'Import strategy',
+            },
+            activate: {
+              type: 'boolean',
+              description: 'Activate after import (default: false)',
+            },
+          },
+          required: ['workflowJson'],
+        },
+      },
+      {
+        name: 'prepare_export_plan',
+        description: 'Prepare details, requiredTools list, and recommendedNextTool name to fetch portable JSON via n8n-mcp.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            workflowId: {
+              type: 'string',
+              description: 'n8n workflow ID to export',
+            },
+            includeMetadata: {
+              type: 'boolean',
+              description: 'Whether to include instance metadata (default: false)',
+            },
+          },
+          required: ['workflowId'],
+        },
+      },
     ],
   };
 });
@@ -286,6 +411,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'deploy_workflow': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Direct tool calling is disabled because the server is running in DELEGATED mode.',
+                  recommendedTool: 'prepare_deploy_plan',
+                  hint: 'Please run prepare_deploy_plan first, then execute mutations using czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await deployWorkflow(parseDeployWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
@@ -298,6 +438,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'execute_workflow': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Direct tool calling is disabled because the server is running in DELEGATED mode.',
+                  recommendedTool: 'prepare_execution_plan',
+                  hint: 'Please run prepare_execution_plan first, then execute mutations using czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await executeWorkflow(parseExecuteWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
@@ -310,6 +465,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'export_workflow': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Direct tool calling is disabled because the server is disabled or running in DELEGATED mode.',
+                  recommendedTool: 'prepare_export_plan',
+                  hint: 'Please run prepare_export_plan first, then execute mutations using czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await exportWorkflow(parseExportWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
@@ -322,6 +492,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'import_workflow': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'Direct tool calling is disabled because the server is running in DELEGATED mode.',
+                  recommendedTool: 'prepare_import_plan',
+                  hint: 'Please run prepare_import_plan first, then execute mutations using czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await importWorkflow(parseImportWorkflowArgs(args), N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
@@ -334,6 +519,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'list_credentials': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'This tool requires a direct connection to the n8n API. It is disabled in DELEGATED mode.',
+                  hint: 'Run the server in standalone mode by setting N8N_DESIGNER_DEPLOY_MODE=standalone, or use the corresponding tools in czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await listCredentials(N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
@@ -346,6 +545,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'list_community_packages': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'This tool requires a direct connection to the n8n API. It is disabled in DELEGATED mode.',
+                  hint: 'Run the server in standalone mode by setting N8N_DESIGNER_DEPLOY_MODE=standalone, or use the corresponding tools in czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await listCommunityPackages(N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
@@ -358,6 +571,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'list_workflows': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'This tool requires a direct connection to the n8n API. It is disabled in DELEGATED mode.',
+                  hint: 'Run the server in standalone mode by setting N8N_DESIGNER_DEPLOY_MODE=standalone, or use the corresponding tools in czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await listWorkflows(N8N_BASE_URL, N8N_API_KEY);
         return {
           content: [
@@ -370,7 +597,69 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'get_workflow': {
+        if (DEPLOY_MODE === 'delegated') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: 'This tool requires a direct connection to the n8n API. It is disabled in DELEGATED mode.',
+                  hint: 'Run the server in standalone mode by setting N8N_DESIGNER_DEPLOY_MODE=standalone, or use the corresponding tools in czlonkowski/n8n-mcp.',
+                }, null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
         const result = await getWorkflow(parseGetWorkflowArgs(args).workflowId, N8N_BASE_URL, N8N_API_KEY);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_deploy_plan': {
+        const result = await prepareDeployPlan(parsePrepareDeployPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_execution_plan': {
+        const result = await prepareExecutionPlan(parsePrepareExecutionPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_import_plan': {
+        const result = await prepareImportPlan(parsePrepareImportPlanArgs(args));
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'prepare_export_plan': {
+        const result = await prepareExportPlan(parsePrepareExportPlanArgs(args));
         return {
           content: [
             {
@@ -499,6 +788,54 @@ function parseValidateWorkflowArgs(args: unknown): ValidateWorkflowArgs {
     typescriptCode: optionalString(input.typescriptCode, 'typescriptCode'),
     workflowJson,
     schemaValidation: optionalEnum(input.schemaValidation, ['off', 'known-node-registry'], 'schemaValidation'),
+  };
+}
+
+function parsePrepareDeployPlanArgs(args: unknown): PrepareDeployPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  if (workflowJson !== undefined) {
+    assertWorkflowJsonShape(workflowJson, 'workflowJson');
+  }
+  return {
+    workflowJson,
+    typescriptCode: optionalString(input.typescriptCode, 'typescriptCode'),
+    filePath: optionalString(input.filePath, 'filePath'),
+    activate: optionalBoolean(input.activate, 'activate'),
+    updateExisting: optionalBoolean(input.updateExisting, 'updateExisting'),
+    workflowId: optionalString(input.workflowId, 'workflowId'),
+    mode: optionalEnum(input.mode, ['upsert-by-name', 'update-by-id', 'create'], 'mode'),
+  };
+}
+
+function parsePrepareExecutionPlanArgs(args: unknown): PrepareExecutionPlanArgs {
+  const input = objectArgs(args);
+  return {
+    workflowId: requiredString(input.workflowId, 'workflowId'),
+    endpoint: optionalEnum(input.endpoint, ['execute', 'run'], 'endpoint'),
+    inputData: input.inputData,
+    triggerType: optionalString(input.triggerType, 'triggerType'),
+    message: optionalString(input.message, 'message'),
+  };
+}
+
+function parsePrepareImportPlanArgs(args: unknown): PrepareImportPlanArgs {
+  const input = objectArgs(args);
+  const workflowJson = input.workflowJson;
+  assertWorkflowJsonShape(workflowJson, 'workflowJson');
+  return {
+    workflowJson,
+    workflowId: optionalString(input.workflowId, 'workflowId'),
+    mode: optionalEnum(input.mode, ['upsert-by-name', 'update-by-id', 'create'], 'mode'),
+    activate: optionalBoolean(input.activate, 'activate'),
+  };
+}
+
+function parsePrepareExportPlanArgs(args: unknown): PrepareExportPlanArgs {
+  const input = objectArgs(args);
+  return {
+    workflowId: requiredString(input.workflowId, 'workflowId'),
+    includeMetadata: optionalBoolean(input.includeMetadata, 'includeMetadata'),
   };
 }
 

@@ -6,6 +6,12 @@ import { executeWorkflow } from './execute.js';
 import { n8nApiRequest } from './n8n-api.js';
 import { exportWorkflow, importWorkflow, listCommunityPackages, listCredentials } from './transfer.js';
 import { validateWorkflow } from './validate.js';
+import {
+  prepareDeployPlan,
+  prepareExecutionPlan,
+  prepareImportPlan,
+  prepareExportPlan,
+} from './prepare.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -726,6 +732,129 @@ export class DeprecatedNodesWorkflow {
     const tsWarningCodes = tsResult.warnings.map(w => w.code);
     expect(tsWarningCodes).toContain('deprecated-native-node');
     expect(tsResult.warnings.filter(w => w.code === 'deprecated-native-node').length).toBe(2);
+  });
+
+  describe('delegated deploy mode and prepare tools', () => {
+    const sampleWorkflowJson = {
+      name: 'Test Delegated Workflow',
+      nodes: [
+        {
+          id: 'manual-trigger',
+          name: 'When clicking "Test workflow"',
+          type: 'n8n-nodes-base.manualTrigger',
+          typeVersion: 1,
+          position: [0, 0],
+        },
+      ],
+      connections: {},
+    };
+
+    it('prepare_deploy_plan compiles, sanitizes, and recommends correct tools', async () => {
+      const plan = await prepareDeployPlan({
+        workflowJson: sampleWorkflowJson,
+        mode: 'upsert-by-name',
+        activate: true,
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.strategy).toBe('upsert-by-name');
+      expect(plan.activate).toBe(true);
+      expect(plan.sanitizedWorkflowJson.name).toBe('Test Delegated Workflow');
+      expect(plan.recommendedMcpTool).toBe('n8n_create_workflow');
+      expect(plan.recommendedMcpArguments.name).toBe('Test Delegated Workflow');
+      expect(plan.recommendedNextTool).toBe('n8n_list_workflows');
+      expect(plan.requiredTools).toEqual(['n8n_list_workflows', 'n8n_create_workflow', 'n8n_update_full_workflow']);
+      expect(plan.instructions).toContain('n8n_list_workflows');
+      expect(plan.instructions).toContain('CRITICAL: Before calling the recommended tool, check if the required n8n-mcp tools');
+    });
+
+    it('prepare_deploy_plan supports TypeScript compilation', async () => {
+      const tsCode = `
+import { workflow, node } from '@n8n-as-code/transformer';
+
+@workflow({
+  name: 'TS Compile Delegated',
+})
+export class TSWorkflow {
+  @node({
+    id: 'manual-trigger',
+    name: 'Manual Trigger',
+    type: 'n8n-nodes-base.manualTrigger',
+    version: 1,
+    position: [0, 0],
+  })
+  trigger = {};
+}
+`;
+      const plan = await prepareDeployPlan({
+        typescriptCode: tsCode,
+        mode: 'create',
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.strategy).toBe('create');
+      expect(plan.sanitizedWorkflowJson.name).toBe('TS Compile Delegated');
+      expect(plan.recommendedMcpTool).toBe('n8n_create_workflow');
+      expect(plan.recommendedNextTool).toBe('n8n_create_workflow');
+      expect(plan.requiredTools).toEqual(['n8n_create_workflow']);
+      expect(plan.instructions).toContain('CRITICAL: Before calling the recommended tool, check if the required n8n-mcp tools');
+    });
+
+    it('prepare_execution_plan formats correct arguments for n8n_test_workflow', async () => {
+      const plan = await prepareExecutionPlan({
+        workflowId: '12345',
+        inputData: { query: 'hello' },
+        triggerType: 'chat',
+        message: 'testing message',
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.workflowId).toBe('12345');
+      expect(plan.recommendedMcpTool).toBe('n8n_test_workflow');
+      expect(plan.recommendedNextTool).toBe('n8n_test_workflow');
+      expect(plan.requiredTools).toEqual(['n8n_test_workflow']);
+      expect(plan.recommendedMcpArguments).toEqual({
+        workflowId: '12345',
+        data: { query: 'hello' },
+        triggerType: 'chat',
+        message: 'testing message',
+      });
+      expect(plan.instructions).toContain('CRITICAL: Before calling the recommended tool, check if the required n8n-mcp tools');
+    });
+
+    it('prepare_import_plan delegates to prepareDeployPlan', async () => {
+      const plan = await prepareImportPlan({
+        workflowJson: sampleWorkflowJson,
+        mode: 'create',
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.strategy).toBe('create');
+      expect(plan.recommendedMcpTool).toBe('n8n_create_workflow');
+      expect(plan.recommendedNextTool).toBe('n8n_create_workflow');
+      expect(plan.requiredTools).toEqual(['n8n_create_workflow']);
+      expect(plan.instructions).toContain('CRITICAL: Before calling the recommended tool, check if the required n8n-mcp tools');
+    });
+
+    it('prepare_export_plan recommends n8n_get_workflow', async () => {
+      const plan = await prepareExportPlan({
+        workflowId: '999',
+        includeMetadata: false,
+      });
+
+      expect(plan.mode).toBe('delegated');
+      expect(plan.workflowId).toBe('999');
+      expect(plan.includeMetadata).toBe(false);
+      expect(plan.recommendedMcpTool).toBe('n8n_get_workflow');
+      expect(plan.recommendedNextTool).toBe('n8n_get_workflow');
+      expect(plan.requiredTools).toEqual(['n8n_get_workflow']);
+      expect(plan.recommendedMcpArguments).toEqual({
+        id: '999',
+        mode: 'full',
+      });
+      expect(plan.instructions).toContain('metadata');
+      expect(plan.instructions).toContain('CRITICAL: Before calling the recommended tool, check if the required n8n-mcp tools');
+    });
   });
 });
 

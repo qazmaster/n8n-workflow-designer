@@ -31,7 +31,7 @@ This skill enables end-to-end n8n workflow creation:
 Natural Language Idea → Workflow Design → TypeScript or SDK JSON → Validation → n8n JSON → Deployed Workflow
 ```
 
-## Prerequisites
+## Prerequisites & Deployment Modes
 
 The companion MCP server includes the required packages:
 
@@ -39,12 +39,20 @@ The companion MCP server includes the required packages:
 - `@n8n/workflow-sdk` for SDK-normalized JSON and official validation
 - `n8n-workflow` for official n8n workflow/node types
 
-Deployment requires a running n8n instance:
+The server operates in one of two modes depending on the `N8N_DESIGNER_DEPLOY_MODE` (or `DEPLOY_MODE`) environment variable:
 
+### 1. Standalone Mode (`standalone` - Default)
+Direct mutation and query tools (`deploy_workflow`, `execute_workflow`, `import_workflow`, `export_workflow`, `list_workflows`, `get_workflow`, `list_credentials`, `list_community_packages`) call the n8n API directly. This requires:
 ```bash
 export N8N_API_KEY="your-api-key"
 export N8N_BASE_URL="https://your-n8n-instance.com"
 ```
+
+### 2. Delegated Mode (`delegated`)
+Direct mutations are blocked. Instead, the server operates completely offline to compile, sanitize, and validate workflows, returning structured migration and execution plans.
+- **Remote / Hosted Backend Support**: The target `n8n-mcp` backend can be local, remote self-hosted, or hosted. `n8n-workflow-designer` does not make any direct HTTP calls to the backend or require local installation of `czlonkowski/n8n-mcp`. The AI client executes all commands via its own configured `n8n-mcp` tools.
+- **No Credentials Required**: In delegated mode, `N8N_API_KEY` and `N8N_BASE_URL` are not required by `n8n-workflow-designer`.
+- **Halt Check (CRITICAL)**: Before calling any recommended tool returned by `prepare_*_plan` (e.g. `n8n_list_workflows`, `n8n_create_workflow`, `n8n_update_full_workflow`, `n8n_test_workflow`, or `n8n_get_workflow`), the AI agent **MUST** check if those tools are configured and available in its client MCP tool list. If these tools are not available, the agent **MUST STOP IMMEDIATELY** and ask the user to connect or configure the `n8n-mcp` server.
 
 ## MCP Tool Usage
 
